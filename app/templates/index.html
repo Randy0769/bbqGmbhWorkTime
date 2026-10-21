@@ -1,12 +1,71 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="hero">
-    <h1>Meine Arbeitszeit</h1>
+<section class="hero"><h1>Meine Arbeitszeit</h1></section>
+{% if errors %}
+<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>
+{% endif %}
+<form method="post" action="/" class="card workday-form">
+    <h2>Arbeitstag prüfen</h2>
+    <p class="form-hint">Zeiten in Europe/Berlin. Alle Arbeitsabschnitte dieses Arbeitstags einbeziehen, Unterbrechungen als Pausen erfassen. Die Prüfung speichert keine Einträge.</p>
+    <div class="field-grid">
+        <label>Arbeitsbeginn<input name="started_at" type="datetime-local" value="{{ values.started_at }}" required step="60"></label>
+        <label>Arbeitsende / Prüfzeitpunkt<input name="ended_at" type="datetime-local" value="{{ values.ended_at }}" required step="60"></label>
+        <label>Vorheriges Arbeitsende<input name="previous_ended_at" type="datetime-local" value="{{ values.previous_ended_at }}" step="60"></label>
+        <label>Wochenarbeitszeit<select name="weekly_hours">
+            {% for hours in ['30', '35', '40'] %}<option value="{{ hours }}" {% if values.weekly_hours == hours %}selected{% endif %}>{{ hours }} Stunden</option>{% endfor %}
+        </select></label>
+        <label>Gleitzeit vor diesem Tag (Minuten)<input name="opening_balance_minutes" type="number" value="{{ values.opening_balance_minutes }}" min="-600000" max="600000" required></label>
+    </div>
+    <label class="checkbox-label"><input name="completed" type="checkbox" {% if values.completed == 'on' %}checked{% endif %}> Arbeitstag abgeschlossen</label>
+    <fieldset>
+        <legend>Tatsächliche Pausen</legend>
+        <input type="hidden" name="break_count" value="{{ pauses|length }}">
+        {% for pause in pauses %}
+        <div class="break-row">
+            <label>Pausenbeginn<input name="break_start_{{ loop.index0 }}" type="datetime-local" step="60" value="{{ pause.started_at }}" required></label>
+            <label>Pausenende<input name="break_end_{{ loop.index0 }}" type="datetime-local" step="60" value="{{ pause.ended_at }}" required></label>
+            <label class="checkbox-label"><input name="break_planned_{{ loop.index0 }}" type="checkbox" {% if pause.planned %}checked{% endif %}> Im Voraus festgelegt</label>
+            <button type="submit" name="action" value="remove_break_{{ loop.index0 }}" class="secondary-button" formnovalidate>Pause {{ loop.index }} entfernen</button>
+        </div>
+        {% endfor %}
+        <button class="secondary-button" type="submit" name="action" value="add_break" formnovalidate>+ Pause hinzufügen</button>
+    </fieldset>
+    <details {% if errors %}open{% endif %}>
+        <summary>Gleitzeit-Ampel einstellen</summary>
+        <div class="field-grid">
+            {% for key, label, minimum, maximum in [
+                ('negative_red', 'Rot minus', -60000, -1),
+                ('negative_yellow', 'Gelb minus', -60000, -1),
+                ('positive_yellow', 'Gelb plus', 1, 60000),
+                ('positive_red', 'Rot plus', 1, 60000)
+            ] %}
+            <label>{{ label }} (Minuten)<input name="{{ key }}" type="number" value="{{ values[key] }}" min="{{ minimum }}" max="{{ maximum }}" required></label>
+            {% endfor %}
+        </div>
+    </details>
+    <div class="actions"><button class="button" type="submit" name="action" value="evaluate">Ergebnisse berechnen</button><span class="form-hint">Warnungen werden beim Berechnen geprüft, nicht im Hintergrund.</span></div>
+</form>
+{% if result %}
+<section class="results" aria-label="Arbeitszeitergebnisse">
+    <h2>Ergebnisse <span class="badge {{ result.status }}">{{ labels[result.status] }}</span></h2>
+    <div class="cards">
+        {% for label, value in [
+            ('Tatsächliche Arbeitszeit', result.actual_minutes|duration),
+            ('Außerhalb des Zeitrahmens', result.outside_window_minutes|duration),
+            ('Ruhepausen · angerechnet / nötig', '%s / %s min'|format(result.qualifying_break_minutes, result.required_break_minutes)),
+            ('Ruhezeit vor Beginn', result.rest_minutes|duration),
+            ('Nächster Beginn · 11 h Ruhezeit', result.earliest_next_start|local_datetime),
+            ('Tagessaldo', result.daily_balance_minutes|duration(true))
+        ] %}
+        <article class="card"><h3>{{ label }}</h3><p class="metric">{{ value }}</p></article>
+        {% endfor %}
+        <article class="card"><h3>Gleitzeit nach diesem Tag</h3><p class="metric">{{ result.projected_balance_minutes|duration(true) }}</p><span class="badge {{ result.balance_color or 'unchecked' }}">{{ labels.get(result.balance_color, 'Nicht bewertet') }}</span></article>
+    </div>
+    <ul class="findings">
+        {% for finding in result.findings %}
+        <li class="finding {{ finding.severity }}"><strong>{{ labels[finding.severity] }}{% if finding.legal_basis %} · {{ finding.legal_basis }}{% endif %}</strong><p>{{ finding.message }}</p></li>
+        {% endfor %}
+    </ul>
 </section>
-<section class="cards" aria-label="Arbeitszeitergebnisse">
-    <article class="card"><h2>Arbeitszeit heute</h2><p aria-label="Noch kein Ergebnis">—</p></article>
-    <article class="card"><h2>Gleitzeit Monat</h2><p aria-label="Noch kein Ergebnis">—</p></article>
-    <article class="card"><h2>Gleitzeit Quartal</h2><p aria-label="Noch kein Ergebnis">—</p></article>
-    <article class="card"><h2>Gleitzeit Jahr</h2><p aria-label="Noch kein Ergebnis">—</p></article>
-</section>
+{% endif %}
 {% endblock %}
