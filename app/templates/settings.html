@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><h1>Einstellungen</h1></section>
+{% if saved %}<p class="success-message" role="status">Einstellungen gespeichert.</p>{% endif %}
+{% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+<form method="post" action="/settings" class="card workday-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Arbeitszeitmodell</h2>
+    <div class="field-grid">
+        <label>Wochenarbeitszeit<select name="weekly_hours">
+            {% for hours in ['30', '35', '40'] %}<option value="{{ hours }}" {% if values.weekly_hours == hours %}selected{% endif %}>{{ hours }} Stunden</option>{% endfor %}
+        </select></label>
+        <label>Anfangssaldo Gleitzeit (Minuten)<input name="opening_balance_minutes" type="number" value="{{ values.opening_balance_minutes }}" min="-600000" max="600000" required></label>
+    </div>
+    <h2>Gleitzeit-Ampel</h2>
+    <div class="field-grid">
+        {% for key, label, minimum, maximum in [
+            ('negative_red', 'Rot minus', -60000, -1),
+            ('negative_yellow', 'Gelb minus', -60000, -1),
+            ('positive_yellow', 'Gelb plus', 1, 60000),
+            ('positive_red', 'Rot plus', 1, 60000)
+        ] %}
+        <label>{{ label }} (Minuten)<input name="{{ key }}" type="number" value="{{ values[key] }}" min="{{ minimum }}" max="{{ maximum }}" required></label>
+        {% endfor %}
+    </div>
+    <p class="form-hint">Jeder Check-in bewahrt den damaligen Einstellungsstand. Die Übersicht zeigt erfasste Dauern, noch keine berechneten Gleitzeitsalden. Gesetzliche Grenzen und der betriebliche Zeitrahmen 06–22 Uhr sind nicht veränderbar.</p>
+    <div class="actions"><button class="button" type="submit">Einstellungen speichern</button><a href="/">Zur Arbeitszeit</a></div>
+</form>
+{% endblock %}

@@ -405,3 +405,69 @@ summary {
         padding: 18px;
     }
 }
+
+nav {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+nav a {
+    text-decoration: none;
+    font-weight: 600;
+}
+
+nav a:hover {
+    text-decoration: underline;
+}
+
+.clock-panel,
+.history-panel {
+    margin-bottom: 24px;
+}
+
+.clock-panel h2 {
+    margin-top: 0;
+}
+
+.checkout-button {
+    background: #713a36;
+    border-color: #ab635d;
+}
+
+.checkout-button:hover {
+    background: #8b4943;
+}
+
+.success-message {
+    background: #193b32;
+    color: #8ee0b8;
+    padding: 18px;
+    border-radius: 8px;
+}
+
+.table-scroll {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    text-align: left;
+}
+
+th,
+td {
+    padding: 12px;
+    border-bottom: 1px solid #303c49;
+    white-space: nowrap;
+}
+
+th {
+    color: #a6b4c3;
+    font-size: 14px;
+}
+
+.workday-form {
+    margin-bottom: 32px;
+}

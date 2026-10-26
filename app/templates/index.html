@@ -4,7 +4,33 @@
 {% if errors %}
 <div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>
 {% endif %}
+<section class="card clock-panel" aria-label="Ein- und Auschecken">
+    <h2>{{ 'Eingecheckt' if clock.active else 'Ausgecheckt' }}</h2>
+    {% if clock.active %}
+    <p>Seit {{ clock.active.started_at|local_datetime }} · {{ clock.active.duration_minutes|duration }}</p>
+    {% endif %}
+    <form method="post" action="/clock">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="revision" value="{{ clock.revision }}">
+        <button class="button {{ 'checkout-button' if clock.active else '' }}" type="submit" name="action" value="{{ 'check_out' if clock.active else 'check_in' }}">{{ 'Jetzt auschecken' if clock.active else 'Jetzt einchecken' }}</button>
+    </form>
+    <p class="form-hint">Lokales Einzelbenutzerprofil ohne Anmeldung. Zeiten werden gespeichert. Pausen werden nicht automatisch abgezogen; die Laufzeit aktualisiert sich beim Neuladen.</p>
+</section>
+{% if clock.entries %}
+<section class="card history-panel" aria-label="Gespeicherte Zeiten">
+    <h2>Letzte Check-ins</h2>
+    <div class="table-scroll"><table>
+        <thead><tr><th scope="col">Beginn</th><th scope="col">Ende</th><th scope="col">Erfasste Dauer ohne Pausenabzug</th></tr></thead>
+        <tbody>{% for entry in clock.entries %}<tr>
+            <td>{{ entry.started_at|local_datetime }}</td>
+            <td>{{ entry.ended_at|local_datetime if entry.ended_at else 'Läuft' }}</td>
+            <td>{{ entry.duration_minutes|duration }}</td>
+        </tr>{% endfor %}</tbody>
+    </table></div>
+</section>
+{% endif %}
 <form method="post" action="/" class="card workday-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <h2>Arbeitstag prüfen</h2>
     <p class="form-hint">Zeiten in Europe/Berlin. Alle Arbeitsabschnitte dieses Arbeitstags einbeziehen, Unterbrechungen als Pausen erfassen. Die Prüfung speichert keine Einträge.</p>
     <div class="field-grid">
