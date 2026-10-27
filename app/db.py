@@ -7,7 +7,7 @@ from typing import Iterator
 
 from app.config import get_settings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
@@ -29,19 +29,19 @@ def init_db(database_path: Path) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     with connect(database_path) as connection:
         version = connection.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, SCHEMA_VERSION):
+        if version not in (0, 1, 2, SCHEMA_VERSION):
             raise RuntimeError(f"Nicht unterstützte Datenbankversion: {version}")
         if version != SCHEMA_VERSION:
             schema = SCHEMA_PATH.read_text(encoding="utf-8") if version == 0 else ""
-            schema += "\n" + SCHEMA_PATH.with_name("migration_002.sql").read_text(encoding="utf-8")
-            # executescript beginnt die Transaktion nicht selbst. DDL und Versionsnummer
-            # müssen gemeinsam erfolgreich sein; der Kontext rollt Fehler zurück.
+            if version < 2:
+                schema += "\n" + SCHEMA_PATH.with_name("migration_002.sql").read_text(encoding="utf-8")
+            schema += "\n" + SCHEMA_PATH.with_name("migration_003.sql").read_text(encoding="utf-8")
+            # DDL und Versionsnummer gemeinsam in einer Transaktion übernehmen.
             connection.executescript(
                 "BEGIN IMMEDIATE;\n" + schema
                 + f"\nPRAGMA user_version = {SCHEMA_VERSION};\nCOMMIT;"
             )
-        # Nur aktuelle Einstellungen normalisieren, niemals Zeiten oder JSON-Snapshots.
-        # user_settings verwendet ISO-Codes, local_settings die holidays-Unterregion.
+        # Aktuelle Einstellungen umstellen; historische Zeiteinträge bleiben unverändert.
         connection.execute(
             "UPDATE user_settings SET holiday_region = 'DE-BW' WHERE holiday_region IS NOT 'DE-BW'"
         )

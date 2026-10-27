@@ -5,17 +5,28 @@ from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.db import connect
 from app.time_rules import BERLIN, StrictModel, Thresholds
+
+
+class HalfHourThresholds(Thresholds):
+    @model_validator(mode="after")
+    def validate_half_hours(self):
+        if any(value % 30 != 0 for value in self.model_dump().values()):
+            raise ValueError("Gleitzeitgrenzen sind nur in halben Stunden (30-Minuten-Schritten) möglich.")
+        return self
 
 
 class Preferences(StrictModel):
     weekly_hours: Literal[30, 35, 40] = 40
     holiday_region: Literal["BW"] = "BW"
     opening_balance_minutes: int = Field(default=0, ge=-600000, le=600000)
-    thresholds: Thresholds = Field(default_factory=Thresholds)
+    thresholds: HalfHourThresholds = Field(default_factory=HalfHourThresholds)
+    daily_thresholds: HalfHourThresholds = Field(default_factory=lambda: HalfHourThresholds(
+        negative_red=-120, negative_yellow=-60, positive_yellow=60, positive_red=120,
+    ))
 
     def form_values(self) -> dict[str, str]:
         return {
@@ -25,19 +36,34 @@ class Preferences(StrictModel):
         }
 
 
+def daily_watchdog(today_seconds: int, weekly_hours: int) -> dict:
+    """Feste Tageswarnung für erfasste Bruttozeit, unabhängig vom Kalendertag."""
+    target_minutes = weekly_hours * 60 // 5
+    color = "red" if today_seconds > 600 * 60 else "yellow" if today_seconds > target_minutes * 60 else "green"
+    return {
+        "color": color,
+        "label": {"green": "Im Tagesrahmen", "yellow": "Tagessoll überschritten", "red": "Mehr als 10 Stunden erfasst"}[color],
+        "target_minutes": target_minutes,
+        "target_percent": target_minutes / 600 * 100,
+        "fill_percent": min(100, max(0, today_seconds / (600 * 60) * 100)),
+    }
+
+
 def load_preferences(path: Path) -> Preferences:
     with connect(path) as connection:
         row = connection.execute("SELECT * FROM local_settings WHERE id = 1").fetchone()
     return Preferences(
         weekly_hours=row["weekly_hours"], holiday_region="BW",
         opening_balance_minutes=row["opening_balance_minutes"],
-        thresholds=Thresholds(**{key: row[key] for key in Thresholds.model_fields}),
+        thresholds=HalfHourThresholds(**{key: row[key] for key in Thresholds.model_fields}),
+        daily_thresholds=HalfHourThresholds(**{key: row[f"daily_{key}"] for key in Thresholds.model_fields}),
     )
 
 
 def save_preferences(path: Path, preferences: Preferences) -> None:
-    values = preferences.model_dump(exclude={"thresholds"})
+    values = preferences.model_dump(exclude={"thresholds", "daily_thresholds"})
     values.update(preferences.thresholds.model_dump())
+    values.update({f"daily_{key}": value for key, value in preferences.daily_thresholds.model_dump().items()})
     with connect(path) as connection:
         connection.execute(
             "UPDATE local_settings SET " + ", ".join(f"{key} = ?" for key in values) + " WHERE id = 1",
@@ -103,20 +129,22 @@ def clock_state(path: Path, page: int = 1) -> dict:
             "duration_minutes": max(0, int(((end or now) - start).total_seconds()) // 60),
         }
 
-    def total_since(boundary):
+    def seconds_since(boundary):
         seconds = 0
         for row in month_rows:
             start = max(datetime.fromisoformat(row["started_at"]), boundary)
             end = min(datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else now, now)
             seconds += max(0, int((end - start).total_seconds()))
-        return seconds // 60
+        return seconds
 
     today_start = datetime.combine(today, time(), tzinfo=BERLIN).astimezone(timezone.utc)
+    today_seconds = seconds_since(today_start)
     return {
         "active": entry(active_row) if active_row else None,
         "entries": [entry(row) for row in rows], "revision": revision,
         "count": count, "page": page, "pages": pages,
         "first": (page - 1) * 20 + 1 if count else 0,
-        "last": min(page * 20, count), "today_minutes": total_since(today_start),
-        "month_minutes": total_since(month_start), "today": now.astimezone(BERLIN).isoformat(),
+        "last": min(page * 20, count), "today_minutes": today_seconds // 60,
+        "today_seconds": today_seconds,
+        "month_minutes": seconds_since(month_start) // 60, "today": now.astimezone(BERLIN).isoformat(),
     }

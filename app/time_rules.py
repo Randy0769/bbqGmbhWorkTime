@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 UTC = timezone.utc
 BERLIN = ZoneInfo("Europe/Berlin")
+Region = Literal["BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH"]
 
 
 def to_utc(value: datetime) -> datetime:
@@ -199,7 +200,7 @@ def evaluate(workday: Workday) -> Evaluation:
 
     start_day = workday.started_at.astimezone(BERLIN).date()
     last_day = workday.ended_at.astimezone(BERLIN).date()
-    calendar = holidays.Germany(subdiv=workday.holiday_region, years=range(start_day.year, last_day.year + 1))
+    calendar = holidays.Germany(subdiv=workday.holiday_region, years=range(start_day.year, last_day.year + 1)) if workday.holiday_region else None
     credited = 0
     restricted_days = set()
     night_minutes = 0
@@ -211,7 +212,7 @@ def evaluate(workday: Workday) -> Evaluation:
         for start, end in segments:
             credited += max(0, minutes(max(start, window_start), min(end, window_end)))
             on_day = max(0, minutes(max(start, day_start), min(end, day_end)))
-            if on_day and (day.weekday() == 6 or day in calendar):
+            if on_day and (day.weekday() == 6 or (calendar is not None and day in calendar)):
                 restricted_days.add(day)
             for night_start, night_end in ((day_start, local_boundary(day, 6)), (local_boundary(day, 23), day_end)):
                 night_minutes += max(0, minutes(max(start, night_start), min(end, night_end)))
@@ -221,12 +222,16 @@ def evaluate(workday: Workday) -> Evaluation:
         add("outside_window", "info", f"{actual - credited} Minuten außerhalb 06–22 Uhr: nicht im betrieblichen Zeitkonto, aber vollständig in der gesetzlichen Prüfung. Vergütungsansprüche werden damit nicht bewertet.")
     for restricted_day in sorted(restricted_days):
         add("restricted_day", "violation", f"Arbeit am {restricted_day:%d.%m.%Y}: Sonn-/Feiertagsruhe im Regelfall verletzt. Beim Vorgesetzten melden; Ausnahmen und Ersatzruhetage gesondert prüfen.", "§§ 9–11 ArbZG")
+    if calendar is None:
+        add("holidays_unknown", "unchecked", "Feiertagsprüfung unvollständig: Bundesland fehlt.", "§ 9 ArbZG")
+    elif workday.holiday_region in ("BY", "SN", "TH"):
+        add("local_holidays", "unchecked", "Zusätzliche örtliche Feiertage sind ohne Gemeindeangabe nicht vollständig prüfbar.", "§ 9 ArbZG")
     if night_minutes:
         add("night_work", "unchecked", "Arbeitszeit in der gesetzlichen Nachtzeit erfasst. Nachtarbeitnehmerstatus, besondere Ausgleichsfristen und Branchenregeln sind gesondert zu prüfen.", "§§ 2, 6 ArbZG")
 
-    # Feiertage gelten fest für Baden-Württemberg; tagübergreifend keine fiktive Sollzeit.
+    # Ohne Feiertagsregion oder bei tagübergreifender Arbeit keine fiktive Sollzeit.
     target = None
-    if start_day == last_day:
+    if start_day == last_day and calendar is not None and workday.holiday_region not in ("BY", "SN", "TH"):
         target = workday.weekly_hours * 60 // 5 if start_day.weekday() < 5 and start_day not in calendar else 0
         add("target_model", "info", "Tagessoll auf Basis einer gleichmäßigen Montag–Freitag-Woche; Urlaub, Krankheit und individuelle Verteilung sind nicht berücksichtigt.")
     else:
