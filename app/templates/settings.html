@@ -12,18 +12,39 @@
         </select></label>
         <label>Anfangssaldo Gleitzeit (Minuten)<input name="opening_balance_minutes" type="number" value="{{ values.opening_balance_minutes }}" min="-600000" max="600000" required></label>
     </div>
-    <h2>Gleitzeit-Ampel</h2>
-    <div class="field-grid">
-        {% for key, label, minimum, maximum in [
-            ('negative_red', 'Rot minus', -60000, -1),
-            ('negative_yellow', 'Gelb minus', -60000, -1),
-            ('positive_yellow', 'Gelb plus', 1, 60000),
-            ('positive_red', 'Rot plus', 1, 60000)
-        ] %}
-        <label>{{ label }} (Minuten)<input name="{{ key }}" type="number" value="{{ values[key] }}" min="{{ minimum }}" max="{{ maximum }}" required></label>
+    <p class="form-hint" id="slider-help">Alle Gleitzeitgrenzen sind in Schritten von einer halben Stunde (30 Minuten) einstellbar. Änderungen mit „Einstellungen speichern“ übernehmen.</p>
+    {% for scope, scope_title, base_extent in [('', 'Gleitzeit-Ampel · Gesamtes Zeitkonto', 3000)] %}
+    <h2>{{ scope_title }}</h2>
+    <div class="slider-grid">
+        {% set raw_extent = [base_extent, values[scope ~ 'negative_red']|int|abs, values[scope ~ 'negative_yellow']|int|abs, values[scope ~ 'positive_red']|int|abs, values[scope ~ 'positive_yellow']|int|abs]|max %}
+        {% set extent = ((raw_extent + 29) // 30) * 30 %}
+        {% for prefix, title, negative in [('negative', 'Minusstunden', true), ('positive', 'Plusstunden', false)] %}
+        <fieldset class="slider-group">
+        <legend><span class="slider-group-icon" aria-hidden="true">{{ '−' if negative else '+' }}</span>{{ title }}</legend>
+        <p class="slider-group-hint">{{ 'Weiter links = mehr Minusstunden.' if negative else 'Weiter rechts = mehr Plusstunden.' }}</p>
+        {% for color, label in [('yellow', 'Warnung ab'), ('red', 'Kritisch ab')] %}
+        {% set key = scope ~ prefix ~ '_' ~ color %}
+        <div class="slider-card slider-{{ color }}">
+            <div class="slider-heading">
+                <label for="{{ key }}"><span class="slider-dot" aria-hidden="true"></span>{{ label }}</label>
+            </div>
+                 <div class="slider-control">
+                 <output class="slider-bubble" for="{{ key }}" id="{{ key }}-value">{{ values[key]|int|duration(true) }}</output>
+                 <input class="threshold-slider" id="{{ key }}" name="{{ key }}" type="range"
+                   value="{{ values[key] }}" min="{{ -extent if negative else 30 }}"
+                   max="{{ -30 if negative else extent }}" step="30" aria-describedby="slider-help {{ key }}-scale">
+                 </div>
+            <div class="slider-scale" id="{{ key }}-scale"><span>{{ (-extent if negative else 30)|duration(true) }}</span><span>{{ (-30 if negative else extent)|duration(true) }}</span></div>
+        </div>
+        {% endfor %}
+        </fieldset>
         {% endfor %}
     </div>
-    <p class="form-hint">Jeder Check-in bewahrt den damaligen Einstellungsstand. Die Übersicht zeigt erfasste Dauern, noch keine berechneten Gleitzeitsalden. Gesetzliche Grenzen und der betriebliche Zeitrahmen 06–22 Uhr sind nicht veränderbar.</p>
+    {% endfor %}
+    <div class="ampel-legend" aria-label="Bedeutung der Ampelfarben"><span class="ampel-green">● Im Rahmen</span><span class="ampel-yellow">● Warnbereich</span><span class="ampel-red">● Kritischer Bereich</span></div>
+    <p class="form-hint">Gelbe Grenzen müssen näher an null liegen als rote Grenzen. Die gesetzten Grenzen zählen bereits zum jeweiligen Warn- oder kritischen Bereich.</p>
+    <p class="form-hint">Jeder Check-in bewahrt den damaligen Einstellungsstand. Der Zeitwächter in der Übersicht verwendet feste Tagesgrenzen: Gelb über dem Tagessoll (Wochenstunden ÷ 5), Rot über 10 Stunden. Die Übersicht zeigt erfasste Dauern, keine berechneten Gleitzeitsalden. Gesetzliche Grenzen und der betriebliche Zeitrahmen 06–22 Uhr sind nicht veränderbar.</p>
     <div class="actions"><button class="button" type="submit">Einstellungen speichern</button><a href="/">Zur Arbeitszeit</a></div>
 </form>
+<script src="{{ url_for('static', path='/js/sliders.js') }}" defer></script>
 {% endblock %}

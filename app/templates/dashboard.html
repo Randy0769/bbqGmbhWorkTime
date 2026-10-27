@@ -23,6 +23,21 @@
     <article class="card stat-card"><div class="stat-label">Gespeicherte Einträge <span aria-hidden="true">≡</span></div><p class="stat-value">{{ clock.count }}</p><p class="stat-caption">{{ 'Davon ein Eintrag aktiv' if clock.active else 'Alle Einträge abgeschlossen' }}</p></article>
     <article class="card stat-card"><div class="stat-label">Wochenmodell <span aria-hidden="true">◎</span></div><p class="stat-value">{{ preferences.weekly_hours }} <small>h / Woche</small></p><a class="stat-caption settings-link" href="/settings">Einstellungen anpassen ↗</a></article>
 </section>
+<section class="card watchdog watchdog-{{ watchdog.color }}" aria-labelledby="watchdog-heading">
+    <div class="section-heading">
+        <div><h2 id="watchdog-heading">Dein Zeitwächter</h2></div>
+    </div>
+    <div class="watchdog-body">
+        <p class="watchdog-duration">{{ clock.today_minutes|duration }} <span>heute erfasst</span></p>
+        <div class="watchdog-track" role="meter" aria-label="Heute erfasste Zeit bis zur 10-Stunden-Grenze" aria-valuemin="0" aria-valuemax="600" aria-valuenow="{{ [clock.today_minutes, 600]|min }}" aria-valuetext="{{ clock.today_minutes|duration }} erfasst. {{ watchdog.label }}. Tagessoll {{ watchdog.target_minutes|duration }}. Rot über 10 Stunden." style="--target-position: {{ watchdog.target_percent }}%;">
+            <span class="watchdog-fill" style="width: {{ watchdog.fill_percent }}%;"></span>
+            <span class="watchdog-marker" aria-hidden="true"></span>
+        </div>
+        <div class="watchdog-scale" style="--target-position: {{ watchdog.target_percent }}%;"><span>0 h</span><span class="watchdog-target">Tagessoll {{ watchdog.target_minutes|duration }}</span><span>10 h</span></div>
+        <div class="ampel-legend"><span class="ampel-green">● Bis zum Tagessoll</span><span class="ampel-yellow">● Über dem Tagessoll</span><span class="ampel-red">● Über 10 Stunden</span></div>
+        <p class="form-hint">Tagessoll = {{ preferences.weekly_hours }} Wochenstunden ÷ 5 Arbeitstage; gleiche Warnschwellen auch am Wochenende und an Feiertagen. Erfasste Bruttozeit ohne Pausenabzug, keine rechtliche Arbeitszeitprüfung. Aktualisierung beim Neuladen.</p>
+    </div>
+</section>
 <section class="card history-panel" aria-labelledby="entries-heading">
     <div class="section-heading"><div><p class="eyebrow">DEIN VERLAUF</p><h2 id="entries-heading">Bisherige Einträge <span class="count-chip">{{ clock.count }}</span></h2></div><a class="secondary-button" href="/?page={{ clock.page }}">Ansicht aktualisieren ↻</a></div>
     {% if clock.entries %}

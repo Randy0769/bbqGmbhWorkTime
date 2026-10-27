@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import BASE_DIR, Settings, get_settings
 from app.db import connect, init_db
 from app.time_rules import Evaluation, Workday, evaluate
-from app.local_tracker import Preferences, clock_action, clock_state, load_preferences, save_preferences
+from app.local_tracker import Preferences, clock_action, clock_state, daily_watchdog, load_preferences, save_preferences
 
 
 def format_duration(value: int | None, signed: bool = False) -> str:
@@ -55,11 +55,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"title": settings.title, "labels": labels, "csrf_token": csrf_token}
 
     def render(request, page=1, errors=None, status_code=200):
+        clock = clock_state(settings.database_path, page)
+        preferences = load_preferences(settings.database_path)
         return templates.TemplateResponse(
             request=request, name="dashboard.html", status_code=status_code,
             context={**common_context(), "errors": errors or [],
-                     "clock": clock_state(settings.database_path, page),
-                     "preferences": load_preferences(settings.database_path)},
+                     "clock": clock, "preferences": preferences,
+                     "watchdog": daily_watchdog(clock["today_seconds"], preferences.weekly_hours)},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -81,12 +83,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             verify_csrf(form)
             values = {key: str(form.get(key, "")) for key in Preferences().form_values()}
         try:
-            preferences = Preferences(
-                weekly_hours=int(values["weekly_hours"]),
-                holiday_region="BW",
-                opening_balance_minutes=values["opening_balance_minutes"],
-                thresholds={key: values[key] for key in ("negative_red", "negative_yellow", "positive_yellow", "positive_red")},
-            )
+            preferences = Preferences.model_validate({
+                "weekly_hours": int(values["weekly_hours"]),
+                "holiday_region": "BW",
+                "opening_balance_minutes": values["opening_balance_minutes"],
+                "thresholds": {key: values[key] for key in ("negative_red", "negative_yellow", "positive_yellow", "positive_red")},
+                "daily_thresholds": load_preferences(settings.database_path).daily_thresholds,
+            })
         except (ValidationError, ValueError) as error:
             errors = [item["msg"] for item in error.errors()] if isinstance(error, ValidationError) else ["Ungültige Wochenarbeitszeit."]
             return templates.TemplateResponse(
