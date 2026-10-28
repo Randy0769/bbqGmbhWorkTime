@@ -9,7 +9,7 @@
     <div class="clock-copy">
         <span class="status-pill {{ 'is-active' if clock.active else '' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Arbeitszeit läuft' if clock.active else 'Bereit für deinen Arbeitstag' }}</span>
         <h2>{{ clock.active.duration_minutes|duration if clock.active else 'Deine Zeit beginnt hier.' }}</h2>
-        <p>{{ 'Eingecheckt seit ' ~ (clock.active.started_at|local_datetime) if clock.active else 'Mit einem Klick starten und deinen Arbeitstag festhalten.' }}</p>
+        <p>{{ 'Eingecheckt seit ' ~ (clock.active.started_at|local_datetime) ~ ' · Intervall ohne Pausenabzug' if clock.active else 'Mit einem Klick starten und deinen Arbeitstag festhalten.' }}</p>
     </div>
     <form method="post" action="/clock">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -18,8 +18,8 @@
     </form>
 </section>
 <section class="stats-grid" aria-label="Zeitübersicht">
-    <article class="card stat-card"><div class="stat-label">Heute erfasst <span aria-hidden="true">◷</span></div><p class="stat-value">{{ clock.today_minutes|duration }}</p><p class="stat-caption">Seit 00:00 Uhr</p></article>
-    <article class="card stat-card"><div class="stat-label">Diesen Monat <span aria-hidden="true">▦</span></div><p class="stat-value">{{ clock.month_minutes|duration }}</p><p class="stat-caption">Alle erfassten Intervalle</p></article>
+    <article class="card stat-card"><div class="stat-label">Heute netto <span aria-hidden="true">◷</span></div><p class="stat-value">{{ clock.today_minutes|duration }}</p></article>
+    <article class="card stat-card"><div class="stat-label">Diesen Monat netto <span aria-hidden="true">▦</span></div><p class="stat-value">{{ clock.month_minutes|duration }}</p></article>
     <article class="card stat-card"><div class="stat-label">Gespeicherte Einträge <span aria-hidden="true">≡</span></div><p class="stat-value">{{ clock.count }}</p><p class="stat-caption">{{ 'Davon ein Eintrag aktiv' if clock.active else 'Alle Einträge abgeschlossen' }}</p></article>
     <article class="card stat-card"><div class="stat-label">Wochenmodell <span aria-hidden="true">◎</span></div><p class="stat-value">{{ preferences.weekly_hours }} <small>h / Woche</small></p><a class="stat-caption settings-link" href="/settings">Einstellungen anpassen ↗</a></article>
 </section>
@@ -28,14 +28,16 @@
         <div><h2 id="watchdog-heading">Dein Zeitwächter</h2></div>
     </div>
     <div class="watchdog-body">
-        <p class="watchdog-duration">{{ clock.today_minutes|duration }} <span>heute erfasst</span></p>
-        <div class="watchdog-track" role="meter" aria-label="Heute erfasste Zeit bis zur 10-Stunden-Grenze" aria-valuemin="0" aria-valuemax="600" aria-valuenow="{{ [clock.today_minutes, 600]|min }}" aria-valuetext="{{ clock.today_minutes|duration }} erfasst. {{ watchdog.label }}. Tagessoll {{ watchdog.target_minutes|duration }}. Rot über 10 Stunden." style="--target-position: {{ watchdog.target_percent }}%;">
+        <p class="watchdog-duration">{{ clock.today_minutes|duration }} <span>heute netto berechnet</span></p>
+        <div class="watchdog-track" role="meter" aria-label="Heute berechnete Nettozeit bis zur 10-Stunden-Grenze" aria-valuemin="0" aria-valuemax="600" aria-valuenow="{{ [clock.today_minutes, 600]|min }}" aria-valuetext="{{ clock.today_minutes|duration }} netto berechnet. {{ watchdog.label }}. Tagessoll {{ watchdog.target_minutes|duration }}. Rot über 10 Stunden." style="--target-position: {{ watchdog.target_percent }}%;">
             <span class="watchdog-fill" style="width: {{ watchdog.fill_percent }}%;"></span>
             <span class="watchdog-marker" aria-hidden="true"></span>
         </div>
         <div class="watchdog-scale" style="--target-position: {{ watchdog.target_percent }}%;"><span>0 h</span><span class="watchdog-target">Tagessoll {{ watchdog.target_minutes|duration }}</span><span>10 h</span></div>
         <div class="ampel-legend"><span class="ampel-green">● Bis zum Tagessoll</span><span class="ampel-yellow">● Über dem Tagessoll</span><span class="ampel-red">● Über 10 Stunden</span></div>
-        <p class="form-hint">Tagessoll = {{ preferences.weekly_hours }} Wochenstunden ÷ 5 Arbeitstage; gleiche Warnschwellen auch am Wochenende und an Feiertagen. Erfasste Bruttozeit ohne Pausenabzug, keine rechtliche Arbeitszeitprüfung. Aktualisierung beim Neuladen.</p>
+        <p class="form-hint">Heute: {{ clock.today_summary.gross_minutes|duration }} erfasst · {{ clock.today_summary.credited_break_minutes|duration }} Lücken ab 15 Minuten · {{ clock.today_summary.automatic_break_minutes|duration }} zusätzlich automatisch abgezogen.</p>
+        {% if clock.today_summary.long_work_stretch %}<p class="error-message" role="status">Mehr als 6 Stunden ohne erfasste Unterbrechung von mindestens 15 Minuten. Ein automatischer Abzug ersetzt keine tatsächlich genommene Ruhepause.</p>{% endif %}
+        <p class="form-hint">Tagessoll = {{ preferences.weekly_hours }} Wochenstunden ÷ 5 Arbeitstage; gleiche Warnschwellen auch am Wochenende und an Feiertagen. Der Zeitwächter nutzt die berechnete Nettozeit, keine vollständige rechtliche Arbeitszeitprüfung. Aktualisierung beim Neuladen.</p>
     </div>
 </section>
 <section class="card history-panel" aria-labelledby="entries-heading">
@@ -43,7 +45,7 @@
     {% if clock.entries %}
     <div class="table-scroll"><table>
         <caption class="sr-only">Gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
-        <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Erfasste Dauer</th><th scope="col">Status</th></tr></thead>
+        <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Dauer ohne Abzug</th><th scope="col">Status</th></tr></thead>
         <tbody>{% for entry in clock.entries %}<tr>
             <td class="entry-date"><time datetime="{{ entry.started_at }}">{{ entry.started_at|local_date }}</time></td>
             <td>{{ entry.started_at|local_time }}</td>
@@ -63,4 +65,20 @@
     <div class="empty-state"><span class="empty-icon" aria-hidden="true">◷</span><h3>Noch keine Einträge</h3><p>Checke dich oben ein. Dein erster Eintrag erscheint dann hier.</p></div>
     {% endif %}
 </section>
+{% if clock.day_summaries %}
+<section class="card history-panel" aria-labelledby="breaks-heading" style="margin-top: 24px;">
+    <div class="section-heading"><div><p class="eyebrow">PRO TAG · NICHT PRO EINTRAG</p><h2 id="breaks-heading">Pausen und Nettozeit</h2></div></div>
+    <div class="table-scroll"><table>
+        <caption class="sr-only">Tagesberechnung für die Tage der angezeigten Einträge, einschließlich aller weiteren Einträge desselben Tages.</caption>
+        <thead><tr><th scope="col">Tag</th><th scope="col">Erfasst</th><th scope="col">Lücken gesamt / ab 15 min</th><th scope="col">Auto-Abzug zusätzlich</th><th scope="col">Netto</th></tr></thead>
+        <tbody>{% for day in clock.day_summaries %}<tr>
+            <td>{{ day.date|local_date }}{% if day.long_work_stretch %}<span class="cell-detail">Hinweis: über 6 h ohne qualifizierende Pause</span>{% endif %}</td>
+            <td>{{ day.gross_minutes|duration }}</td>
+            <td>{{ day.gap_minutes|duration }} / {{ day.credited_break_minutes|duration }}</td>
+            <td>{{ day.automatic_break_minutes|duration }}</td>
+            <td class="entry-duration">{{ day.net_minutes|duration }}</td>
+        </tr>{% endfor %}</tbody>
+    </table></div>
+</section>
+{% endif %}
 {% endblock %}
