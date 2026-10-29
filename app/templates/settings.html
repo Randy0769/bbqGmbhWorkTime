@@ -12,7 +12,7 @@
         </select></label>
         <label>Anfangssaldo Gleitzeit (Minuten)<input name="opening_balance_minutes" type="number" value="{{ values.opening_balance_minutes }}" min="-600000" max="600000" required></label>
     </div>
-    <p class="form-hint" id="slider-help">Ampelgrenzen in 30-Minuten-Schritten.</p>
+    <p class="form-hint" id="slider-help">Alle Gleitzeitgrenzen sind in Schritten von einer halben Stunde (30 Minuten) einstellbar. Änderungen mit „Einstellungen speichern“ übernehmen.</p>
     {% for scope, scope_title, base_extent in [('', 'Gleitzeit-Ampel · Gesamtes Zeitkonto', 3000)] %}
     <h2>{{ scope_title }}</h2>
     <div class="slider-grid">
@@ -21,6 +21,7 @@
         {% for prefix, title, negative in [('negative', 'Minusstunden', true), ('positive', 'Plusstunden', false)] %}
         <fieldset class="slider-group">
         <legend><span class="slider-group-icon" aria-hidden="true">{{ '−' if negative else '+' }}</span>{{ title }}</legend>
+        <p class="slider-group-hint">{{ 'Weiter links = mehr Minusstunden.' if negative else 'Weiter rechts = mehr Plusstunden.' }}</p>
         {% for color, label in [('yellow', 'Warnung ab'), ('red', 'Kritisch ab')] %}
         {% set key = scope ~ prefix ~ '_' ~ color %}
         <div class="slider-card slider-{{ color }}">
@@ -41,7 +42,8 @@
     </div>
     {% endfor %}
     <div class="ampel-legend" aria-label="Bedeutung der Ampelfarben"><span class="ampel-green">● Im Rahmen</span><span class="ampel-yellow">● Warnbereich</span><span class="ampel-red">● Kritischer Bereich</span></div>
-    <p class="form-hint">Gilt für Woche, Monat, Quartal und Jahr. Gelb muss näher an null liegen als Rot; Grenzwerte sind eingeschlossen. Anfangssaldo wird nicht zu den Periodensalden addiert.</p>
+    <p class="form-hint">Gelbe Grenzen müssen näher an null liegen als rote Grenzen. Die gesetzten Grenzen zählen bereits zum jeweiligen Warn- oder kritischen Bereich.</p>
+    <p class="form-hint">Jeder Check-in bewahrt den damaligen Einstellungsstand. Der Zeitwächter in der Übersicht verwendet feste Tagesgrenzen: Gelb über dem Tagessoll (Wochenstunden ÷ 5), Rot über 10 Stunden. Die Übersicht zeigt erfasste Dauern, keine berechneten Gleitzeitsalden. Gesetzliche Grenzen und der betriebliche Zeitrahmen 06–22 Uhr sind nicht veränderbar.</p>
     <div class="actions"><button class="button" type="submit">Einstellungen speichern</button><a href="/">Zur Arbeitszeit</a></div>
 </form>
 <script src="{{ url_for('static', path='/js/sliders.js') }}" defer></script>

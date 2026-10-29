@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="page-heading">
-    <div><h1>Meine Arbeitszeit<span>.</span></h1></div>
+    <div><p class="eyebrow">DEIN ZEITÜBERBLICK</p><h1>Meine Arbeitszeit<span>.</span></h1><p class="subtitle">Alles erfasst. Alles im Blick.</p></div>
     <span class="date-chip">{{ clock.today|local_date }} <span>· Europe/Berlin</span></span>
 </section>
 {% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
@@ -9,7 +9,7 @@
     <div class="clock-copy">
         <span class="status-pill {{ 'is-active' if clock.active else '' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Arbeitszeit läuft' if clock.active else 'Bereit für deinen Arbeitstag' }}</span>
         <h2>{{ clock.active.duration_minutes|duration if clock.active else 'Deine Zeit beginnt hier.' }}</h2>
-        {% if clock.active %}<p>Eingecheckt seit {{ clock.active.started_at|local_datetime }} · ohne Pausenabzug</p>{% endif %}
+        <p>{{ 'Eingecheckt seit ' ~ (clock.active.started_at|local_datetime) ~ ' · Intervall ohne Pausenabzug' if clock.active else 'Mit einem Klick starten und deinen Arbeitstag festhalten.' }}</p>
     </div>
     <form method="post" action="/clock">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -23,17 +23,6 @@
     <article class="card stat-card"><div class="stat-label">Gespeicherte Einträge <span aria-hidden="true">≡</span></div><p class="stat-value">{{ clock.count }}</p><p class="stat-caption">{{ 'Davon ein Eintrag aktiv' if clock.active else 'Alle Einträge abgeschlossen' }}</p></article>
     <article class="card stat-card"><div class="stat-label">Wochenmodell <span aria-hidden="true">◎</span></div><p class="stat-value">{{ preferences.weekly_hours }} <small>h / Woche</small></p><a class="stat-caption settings-link" href="/settings">Einstellungen anpassen ↗</a></article>
 </section>
-<section aria-labelledby="balance-heading">
-    <div class="balance-heading"><div><p class="eyebrow">DEINE GLEITZEIT</p><h2 id="balance-heading">Plus und Minus im Überblick</h2></div><a class="settings-link" href="/settings">Ampelgrenzen anpassen ↗</a></div>
-    <div class="stats-grid balance-grid">
-        {% for balance in clock.balances %}
-        <article class="card stat-card balance-card balance-{{ balance.color }}">
-            <div class="stat-label">{{ balance.title }} <span class="balance-status">● {{ labels[balance.color] }}</span></div>
-            <p class="stat-value">{{ balance.balance_minutes|duration(true) }}</p>
-        </article>
-        {% endfor %}
-    </div>
-</section>
 <section class="card watchdog watchdog-{{ watchdog.color }}" aria-labelledby="watchdog-heading">
     <div class="section-heading">
         <div><h2 id="watchdog-heading">Dein Zeitwächter</h2></div>
@@ -46,25 +35,18 @@
         </div>
         <div class="watchdog-scale" style="--target-position: {{ watchdog.target_percent }}%;"><span>0 h</span><span class="watchdog-target">Tagessoll {{ watchdog.target_minutes|duration }}</span><span>10 h</span></div>
         <div class="ampel-legend"><span class="ampel-green">● Bis zum Tagessoll</span><span class="ampel-yellow">● Über dem Tagessoll</span><span class="ampel-red">● Über 10 Stunden</span></div>
-        {% if clock.today_summary.long_work_stretch %}<p class="error-message" role="status">Über 6 Stunden ohne erfasste Pause ab 15 Minuten. Automatischer Abzug ersetzt keine Ruhepause.</p>{% endif %}
+        <p class="form-hint">Heute: {{ clock.today_summary.gross_minutes|duration }} erfasst · {{ clock.today_summary.credited_break_minutes|duration }} Lücken ab 15 Minuten · {{ clock.today_summary.automatic_break_minutes|duration }} zusätzlich automatisch abgezogen.</p>
+        {% if clock.today_summary.long_work_stretch %}<p class="error-message" role="status">Mehr als 6 Stunden ohne erfasste Unterbrechung von mindestens 15 Minuten. Ein automatischer Abzug ersetzt keine tatsächlich genommene Ruhepause.</p>{% endif %}
+        <p class="form-hint">Tagessoll = {{ preferences.weekly_hours }} Wochenstunden ÷ 5 Arbeitstage; gleiche Warnschwellen auch am Wochenende und an Feiertagen. Der Zeitwächter nutzt die berechnete Nettozeit, keine vollständige rechtliche Arbeitszeitprüfung. Aktualisierung beim Neuladen.</p>
     </div>
 </section>
 <section class="card history-panel" aria-labelledby="entries-heading">
-    <div class="section-heading"><div><p class="eyebrow">DEIN VERLAUF</p><h2 id="entries-heading">Bisherige Einträge <span class="count-chip">{{ clock.filtered_count }}</span></h2></div><a class="secondary-button" href="/?page={{ clock.page }}{{ clock.filter_query }}#entries-heading">Ansicht aktualisieren ↻</a></div>
-    <form class="history-filters" method="get" action="/#entries-heading" aria-label="Einträge nach Jahr und Monat auswählen">
-        <label>Jahr<select name="year"><option value="0">Alle Jahre</option>{% for year in clock.years %}<option value="{{ year }}" {% if clock.selected_year == year %}selected{% endif %}>{{ year }}</option>{% endfor %}</select></label>
-        <label>Monat<select name="month"><option value="0">Alle Monate</option>{% for name in months %}<option value="{{ loop.index }}" {% if clock.selected_month == loop.index %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
-        <button class="button" type="submit">Einträge anzeigen</button>
-        {% if clock.selected_year or clock.selected_month %}<a href="/#entries-heading">Alle Einträge</a>{% endif %}
-    </form>
+    <div class="section-heading"><div><p class="eyebrow">DEIN VERLAUF</p><h2 id="entries-heading">Bisherige Einträge <span class="count-chip">{{ clock.count }}</span></h2></div><a class="secondary-button" href="/?page={{ clock.page }}">Ansicht aktualisieren ↻</a></div>
     {% if clock.entries %}
-    {% for period, entries in clock.entries|groupby('period')|reverse %}
-    <details class="history-month">
-        <summary><span>{{ months[period[5:7]|int - 1] }} {{ period[:4] }}</span><span class="count-chip">{{ entries|length }} auf dieser Seite</span></summary>
     <div class="table-scroll"><table>
-        <caption class="sr-only">{{ months[period[5:7]|int - 1] }} {{ period[:4] }}: gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
+        <caption class="sr-only">Gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
         <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Dauer ohne Abzug</th><th scope="col">Status</th></tr></thead>
-        <tbody>{% for entry in entries %}<tr>
+        <tbody>{% for entry in clock.entries %}<tr>
             <td class="entry-date"><time datetime="{{ entry.started_at }}">{{ entry.started_at|local_date }}</time></td>
             <td>{{ entry.started_at|local_time }}</td>
             <td>{% if entry.ended_at %}{{ entry.ended_at|local_time }}{% if entry.ended_at|local_date != entry.started_at|local_date %}<span class="cell-detail">{{ entry.ended_at|local_date }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -72,22 +54,20 @@
             <td><span class="status-pill {{ 'is-active' if not entry.ended_at else 'is-complete' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Läuft' if not entry.ended_at else 'Abgeschlossen' }}</span></td>
         </tr>{% endfor %}</tbody>
     </table></div>
-    </details>
-    {% endfor %}
-    <div class="table-footer"><p>{{ clock.first }}–{{ clock.last }} von {{ clock.filtered_count }} Einträgen{% if clock.selected_year or clock.selected_month %} · {{ clock.count }} insgesamt{% endif %}</p>
+    <div class="table-footer"><p>{{ clock.first }}–{{ clock.last }} von {{ clock.count }} Einträgen</p>
         <nav class="pagination" aria-label="Eintragsseiten">
-            {% if clock.page > 1 %}<a class="secondary-button" href="/?page={{ clock.page - 1 }}{{ clock.filter_query }}#entries-heading">← Zurück</a>{% endif %}
+            {% if clock.page > 1 %}<a class="secondary-button" href="/?page={{ clock.page - 1 }}">← Zurück</a>{% endif %}
             <span>Seite {{ clock.page }} / {{ clock.pages }}</span>
-            {% if clock.page < clock.pages %}<a class="secondary-button" href="/?page={{ clock.page + 1 }}{{ clock.filter_query }}#entries-heading">Weiter →</a>{% endif %}
+            {% if clock.page < clock.pages %}<a class="secondary-button" href="/?page={{ clock.page + 1 }}">Weiter →</a>{% endif %}
         </nav>
     </div>
     {% else %}
-    <div class="empty-state"><span class="empty-icon" aria-hidden="true">◷</span>{% if clock.selected_year or clock.selected_month %}<h3>Keine Einträge für diese Auswahl</h3><p>Wähle ein anderes Jahr oder einen anderen Monat.</p>{% else %}<h3>Noch keine Einträge</h3><p>Checke dich oben ein. Dein erster Eintrag erscheint dann hier.</p>{% endif %}</div>
+    <div class="empty-state"><span class="empty-icon" aria-hidden="true">◷</span><h3>Noch keine Einträge</h3><p>Checke dich oben ein. Dein erster Eintrag erscheint dann hier.</p></div>
     {% endif %}
 </section>
 {% if clock.day_summaries %}
 <section class="card history-panel" aria-labelledby="breaks-heading" style="margin-top: 24px;">
-    <div class="section-heading"><div><h2 id="breaks-heading">Pausen und Nettozeit</h2></div></div>
+    <div class="section-heading"><div><p class="eyebrow">PRO TAG · NICHT PRO EINTRAG</p><h2 id="breaks-heading">Pausen und Nettozeit</h2></div></div>
     <div class="table-scroll"><table>
         <caption class="sr-only">Tagesberechnung für die Tage der angezeigten Einträge, einschließlich aller weiteren Einträge desselben Tages.</caption>
         <thead><tr><th scope="col">Tag</th><th scope="col">Erfasst</th><th scope="col">Lücken gesamt / ab 15 min</th><th scope="col">Auto-Abzug zusätzlich</th><th scope="col">Netto</th></tr></thead>

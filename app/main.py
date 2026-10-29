@@ -52,11 +52,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403, detail="Ungültiges Formular. Seite neu laden.")
 
     def common_context():
-        return {"title": settings.title, "labels": labels, "csrf_token": csrf_token,
-            "months": ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]}
+        return {"title": settings.title, "labels": labels, "csrf_token": csrf_token}
 
-    def render(request, page=1, errors=None, status_code=200, year=None, month=None):
-        clock = clock_state(settings.database_path, page, year=year, month=month)
+    def render(request, page=1, errors=None, status_code=200):
+        clock = clock_state(settings.database_path, page)
         preferences = load_preferences(settings.database_path)
         return templates.TemplateResponse(
             request=request, name="dashboard.html", status_code=status_code,
@@ -114,10 +113,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse("/", status_code=303)
 
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)
-    def index(request: Request, page: int = Query(default=1, ge=1, le=1000000),
-              year: int = Query(default=0, ge=0, le=9998),
-              month: int = Query(default=0, ge=0, le=12)):
-        return render(request, page=page, year=year or None, month=month or None)
+    def index(request: Request, page: int = Query(default=1, ge=1, le=1000000)):
+        return render(request, page=page)
 
     @application.post("/api/time-rules/evaluate", response_model=Evaluation, tags=["Arbeitszeitregeln"])
     def evaluate_workday(workday: Workday) -> Evaluation:
