@@ -300,6 +300,60 @@ h1 span {
     text-decoration: none;
 }
 
+.balance-heading {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+}
+
+.balance-heading h2 {
+    margin: 0;
+    font-size: 22px;
+}
+
+.balance-heading>a {
+    font-size: 12px;
+}
+
+.balance-grid {
+    margin-bottom: 16px;
+}
+
+.balance-card {
+    --balance-color: #90f0ca;
+    border-top: 3px solid var(--balance-color);
+}
+
+.balance-yellow {
+    --balance-color: #f4c965;
+}
+
+.balance-red {
+    --balance-color: #ff939a;
+}
+
+.balance-card .stat-label>.balance-status,
+.balance-card .stat-value {
+    color: var(--balance-color);
+}
+
+.balance-period {
+    margin-top: 12px;
+}
+
+.balance-explanation {
+    margin-bottom: 32px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.balance-explanation>summary {
+    cursor: pointer;
+    color: var(--accent);
+}
+
 .history-panel {
     overflow: hidden;
 }
@@ -434,6 +488,56 @@ h1 span {
 
 .table-scroll {
     overflow-x: auto;
+}
+
+.history-filters {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 0 28px 16px;
+}
+
+.history-filters label {
+    flex: 1 1 150px;
+}
+
+.history-filters>a {
+    font-size: 12px;
+    padding-bottom: 12px;
+}
+
+.history-hint {
+    margin: 0;
+    padding: 0 28px 20px;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+.history-month {
+    border-top: 1px solid #33504b;
+}
+
+.history-month>summary {
+    padding: 16px 28px;
+    color: var(--accent);
+    background: #19302f;
+    font-size: 14px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.history-month>summary::marker {
+    color: var(--accent);
+}
+
+.history-month>summary:hover {
+    background: #213e3b;
+}
+
+.history-month>summary .count-chip {
+    display: inline-block;
+    font-weight: 400;
 }
 
 table {
