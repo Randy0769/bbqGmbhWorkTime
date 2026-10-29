@@ -40,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.filters["duration"] = format_duration
     templates.env.filters["local_datetime"] = lambda value: datetime.fromisoformat(value).strftime("%d.%m.%Y %H:%M %z")
     templates.env.filters["local_date"] = lambda value: datetime.fromisoformat(value).strftime("%d.%m.%Y")
+    templates.env.filters["weekday"] = lambda value: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"][datetime.fromisoformat(value).weekday()]
     templates.env.filters["local_time"] = lambda value: datetime.fromisoformat(value).strftime("%H:%M:%S")
     labels = {
         "violation": "Verletzung", "warning": "Warnung", "info": "Hinweis",

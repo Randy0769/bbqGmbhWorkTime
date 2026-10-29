@@ -257,6 +257,7 @@ def clock_state(path: Path, page: int = 1, now: datetime | None = None,
             "ended_at": end.astimezone(BERLIN).isoformat() if end else None,
             "duration_minutes": max(0, int(((end or now) - start).total_seconds()) // 60),
             "period": start.astimezone(BERLIN).strftime("%Y-%m"),
+            "date": start.astimezone(BERLIN).date().isoformat(),
         }
 
     days = daily_totals(summary_rows, now)

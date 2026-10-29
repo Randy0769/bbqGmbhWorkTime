@@ -58,13 +58,24 @@
         {% if clock.selected_year or clock.selected_month %}<a href="/#entries-heading">Alle Einträge</a>{% endif %}
     </form>
     {% if clock.entries %}
+    {% set summaries = namespace(shown=[]) %}
     {% for period, entries in clock.entries|groupby('period')|reverse %}
     <details class="history-month">
         <summary><span>{{ months[period[5:7]|int - 1] }} {{ period[:4] }}</span><span class="count-chip">{{ entries|length }} auf dieser Seite</span></summary>
+    {% for entry_date, day_entries in entries|groupby('date')|reverse %}
+    <div class="history-day-group">
+    <details class="history-day">
+        <summary>
+            <span class="day-date-badge" aria-hidden="true">{{ entry_date[8:10] }}<small>{{ entry_date[5:7] }} / {{ entry_date[:4] }}</small></span>
+            <span class="day-heading"><strong>{{ entry_date|weekday }}</strong><time datetime="{{ entry_date }}">{{ entry_date|local_date }}</time></span>
+            {% for day in clock.day_summaries if day.date == entry_date %}<span class="day-heading-net"><small>Nettozeit</small><strong>{{ day.net_minutes|duration }}</strong></span>{% endfor %}
+            <span class="day-entry-count">{{ day_entries|length }} {{ 'Eintrag' if day_entries|length == 1 else 'Einträge' }} <small>auf dieser Seite</small></span>
+            <span class="day-chevron" aria-hidden="true">›</span>
+        </summary>
     <div class="table-scroll"><table>
-        <caption class="sr-only">{{ months[period[5:7]|int - 1] }} {{ period[:4] }}: gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
+        <caption class="sr-only">{{ entry_date|local_date }}: gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
         <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Dauer ohne Abzug</th><th scope="col">Status</th></tr></thead>
-        <tbody>{% for entry in entries %}<tr>
+        <tbody>{% for entry in day_entries %}<tr>
             <td class="entry-date"><time datetime="{{ entry.started_at }}">{{ entry.started_at|local_date }}</time></td>
             <td>{{ entry.started_at|local_time }}</td>
             <td>{% if entry.ended_at %}{{ entry.ended_at|local_time }}{% if entry.ended_at|local_date != entry.started_at|local_date %}<span class="cell-detail">{{ entry.ended_at|local_date }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
@@ -72,6 +83,18 @@
             <td><span class="status-pill {{ 'is-active' if not entry.ended_at else 'is-complete' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Läuft' if not entry.ended_at else 'Abgeschlossen' }}</span></td>
         </tr>{% endfor %}</tbody>
     </table></div>
+    </details>
+        {% set entry_ids = day_entries|map(attribute='id')|list %}
+        {% for day in clock.day_summaries %}
+        {% set matches = namespace(found=false) %}{% for id in entry_ids %}{% if id in day.ids %}{% set matches.found = true %}{% endif %}{% endfor %}
+        {% if matches.found and day.date != entry_date and day.date not in summaries.shown and not (clock.entries|selectattr('date', 'equalto', day.date)|list) %}
+        <div class="day-summary">
+            <p class="day-net-total"><span>Nettozeit · {{ day.date|local_date }}</span><strong>{{ day.net_minutes|duration }}</strong></p>
+        </div>
+        {% set summaries.shown = summaries.shown + [day.date] %}
+        {% endif %}{% endfor %}
+    </div>
+    {% endfor %}
     </details>
     {% endfor %}
     <div class="table-footer"><p>{{ clock.first }}–{{ clock.last }} von {{ clock.filtered_count }} Einträgen{% if clock.selected_year or clock.selected_month %} · {{ clock.count }} insgesamt{% endif %}</p>
@@ -85,20 +108,4 @@
     <div class="empty-state"><span class="empty-icon" aria-hidden="true">◷</span>{% if clock.selected_year or clock.selected_month %}<h3>Keine Einträge für diese Auswahl</h3><p>Wähle ein anderes Jahr oder einen anderen Monat.</p>{% else %}<h3>Noch keine Einträge</h3><p>Checke dich oben ein. Dein erster Eintrag erscheint dann hier.</p>{% endif %}</div>
     {% endif %}
 </section>
-{% if clock.day_summaries %}
-<section class="card history-panel" aria-labelledby="breaks-heading" style="margin-top: 24px;">
-    <div class="section-heading"><div><h2 id="breaks-heading">Pausen und Nettozeit</h2></div></div>
-    <div class="table-scroll"><table>
-        <caption class="sr-only">Tagesberechnung für die Tage der angezeigten Einträge, einschließlich aller weiteren Einträge desselben Tages.</caption>
-        <thead><tr><th scope="col">Tag</th><th scope="col">Erfasst</th><th scope="col">Lücken gesamt / ab 15 min</th><th scope="col">Auto-Abzug zusätzlich</th><th scope="col">Netto</th></tr></thead>
-        <tbody>{% for day in clock.day_summaries %}<tr>
-            <td>{{ day.date|local_date }}{% if day.long_work_stretch %}<span class="cell-detail">Hinweis: über 6 h ohne qualifizierende Pause</span>{% endif %}</td>
-            <td>{{ day.gross_minutes|duration }}</td>
-            <td>{{ day.gap_minutes|duration }} / {{ day.credited_break_minutes|duration }}</td>
-            <td>{{ day.automatic_break_minutes|duration }}</td>
-            <td class="entry-duration">{{ day.net_minutes|duration }}</td>
-        </tr>{% endfor %}</tbody>
-    </table></div>
-</section>
-{% endif %}
 {% endblock %}

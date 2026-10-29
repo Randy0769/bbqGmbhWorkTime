@@ -540,6 +540,131 @@ h1 span {
     font-weight: 400;
 }
 
+.history-day-group {
+    margin: 18px 22px;
+    border: 1px solid #304156;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 6px 18px #0002;
+}
+
+.history-day>summary {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 18px 22px;
+    background: linear-gradient(110deg, #1c2c3c, #152230);
+    color: #e9eef5;
+    cursor: pointer;
+    list-style: none;
+}
+
+.history-day>summary::-webkit-details-marker {
+    display: none;
+}
+
+.history-day>summary:hover {
+    background: #223446;
+}
+
+.history-day>summary:focus-visible {
+    outline-offset: -4px;
+}
+
+.day-date-badge {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 60px;
+    height: 64px;
+    border: 1px solid #3b5a5b;
+    border-radius: 12px;
+    color: var(--accent);
+    background: #1c3938;
+    font-size: 27px;
+    font-weight: 700;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+}
+
+.day-date-badge small {
+    margin-top: 4px;
+    color: #b1cfc9;
+    font-size: 9px;
+    font-weight: 500;
+}
+
+.day-heading {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 120px;
+    gap: 3px;
+}
+
+.day-heading strong {
+    font-size: 16px;
+    font-weight: 650;
+}
+
+.day-heading time {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.day-heading-net {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 16px;
+    border-left: 1px solid #3b5065;
+    white-space: nowrap;
+}
+
+.day-heading-net small {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.day-heading-net strong {
+    color: var(--accent);
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+}
+
+.day-entry-count {
+    display: flex;
+    flex-direction: column;
+    margin-left: auto;
+    color: #d0dbe7;
+    font-size: 12px;
+    text-align: right;
+}
+
+.day-entry-count small {
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.day-chevron {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 30px;
+    height: 30px;
+    margin-left: 4px;
+    border: 1px solid #3b5065;
+    border-radius: 50%;
+    color: var(--accent);
+    font-size: 25px;
+    line-height: 1;
+}
+
+.history-day[open]>summary .day-chevron {
+    transform: rotate(90deg);
+}
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -578,6 +703,148 @@ tbody tr:hover {
     display: block;
     color: var(--muted);
     font-size: 10px;
+}
+
+.day-summary {
+    background: #111e2a;
+    color: #b5c2d3;
+    padding: 16px 22px 20px;
+    border-top: 1px solid #304156;
+}
+
+.day-net-total {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px 16px;
+    margin: 0;
+    font-size: 12px;
+}
+
+.day-net-total strong {
+    color: var(--accent);
+    font-size: 19px;
+    font-variant-numeric: tabular-nums;
+}
+
+.day-summary-title {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 10px;
+    letter-spacing: .6px;
+}
+
+.day-summary-values {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0;
+}
+
+.day-summary-values>div {
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid #2a3b4d;
+    border-radius: 10px;
+    background: #182737;
+}
+
+.day-summary-values dt {
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 11px;
+}
+
+.day-summary-values dd {
+    margin: 0;
+    color: #e9eef5;
+    font-size: 16px;
+    font-weight: 650;
+    font-variant-numeric: tabular-nums;
+}
+
+.day-summary-values small {
+    display: block;
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 10px;
+}
+
+.day-summary-values>.day-net {
+    background: #1b3833;
+    border-color: #345b50;
+}
+
+.day-net dt,
+.day-net dd {
+    color: var(--accent);
+}
+
+.day-pause-warning {
+    margin: 12px 0 0;
+    color: #f4c965;
+    font-size: 11px;
+}
+
+@media (max-width: 700px) {
+    .history-day-group {
+        margin: 12px;
+    }
+
+    .history-day>summary {
+        padding: 14px;
+        gap: 10px;
+    }
+
+    .day-date-badge {
+        width: 46px;
+        height: 54px;
+        font-size: 23px;
+    }
+
+    .day-heading {
+        flex-basis: 90px;
+    }
+
+    .day-heading strong {
+        font-size: 14px;
+    }
+
+    .day-heading-net {
+        padding-left: 10px;
+    }
+
+    .day-heading-net strong {
+        font-size: 13px;
+    }
+
+    .history-day>summary {
+        flex-wrap: wrap;
+    }
+
+    .day-summary {
+        padding: 14px;
+    }
+
+    .day-summary-values {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .day-summary-values dd {
+        font-size: 14px;
+    }
+
+    .day-entry-count small {
+        display: none;
+    }
+
+    .day-chevron {
+        width: 24px;
+        height: 24px;
+        margin-left: 0;
+    }
 }
 
 .muted {
