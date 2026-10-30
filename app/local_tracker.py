@@ -103,6 +103,114 @@ def clock_action(path: Path, action: str, revision: int, now: datetime | None = 
         connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
 
 
+def parse_entry_datetime(value: str) -> datetime:
+    """Deutsche Eingaben mit optionalen Sekunden sowie bestehende ISO-Werte lesen."""
+    for pattern in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"):
+        try:
+            return datetime.strptime(value.strip(), pattern)
+        except ValueError:
+            pass
+    return datetime.fromisoformat(value)
+
+
+def edit_timestamp(value: str, offset: str = "") -> datetime:
+    """Berliner Ortszeit sekundengenau prüfen, inklusive Sommerzeitwechsel."""
+    try:
+        local = parse_entry_datetime(value)
+    except ValueError:
+        raise ValueError("Bitte gültige Datums- und Zeitangaben eingeben.") from None
+    if local.tzinfo is not None or local.microsecond or not 2000 <= local.year <= 2100:
+        raise ValueError("Bitte Ortszeiten zwischen 2000 und 2100 mit höchstens ganzen Sekunden eingeben.")
+    if offset not in ("", "+01:00", "+02:00"):
+        raise ValueError("Ungültiger UTC-Offset.")
+    candidates = set()
+    for fold in (0, 1):
+        aware = local.replace(tzinfo=BERLIN, fold=fold)
+        utc = aware.astimezone(timezone.utc)
+        if utc.astimezone(BERLIN).replace(tzinfo=None) == local:
+            actual_offset = aware.strftime("%z")
+            if not offset or actual_offset == offset.replace(":", ""):
+                candidates.add(utc)
+    if len(candidates) != 1:
+        raise ValueError("Ortszeit oder UTC-Offset passt nicht zur Zeitumstellung. Bei doppelten Zeiten UTC+01 oder UTC+02 auswählen.")
+    return candidates.pop()
+
+
+def load_edit_entry(path: Path, entry_id: int) -> dict:
+    with connect(path) as connection:
+        connection.execute("BEGIN")
+        row = connection.execute("SELECT * FROM local_clock_entries WHERE id = ?", (entry_id,)).fetchone()
+        if row is None:
+            raise LookupError("Eintrag nicht gefunden.")
+        if row["ended_at"] is None:
+            raise ValueError("Laufende Einträge können erst nach dem Auschecken bearbeitet werden.")
+        revision = connection.execute("SELECT clock_revision FROM local_settings WHERE id = 1").fetchone()[0]
+    values = {"revision": str(revision)}
+    for name in ("started_at", "ended_at"):
+        local = datetime.fromisoformat(row[name]).astimezone(BERLIN)
+        values[name] = local.strftime("%Y-%m-%dT%H:%M:%S")
+        ambiguous = local.replace(fold=0).utcoffset() != local.replace(fold=1).utcoffset()
+        values[name + "_offset"] = local.isoformat()[-6:] if ambiguous else ""
+    return values
+
+
+def update_entry(path: Path, entry_id: int, values: dict, now: datetime | None = None) -> None:
+    start = edit_timestamp(values["started_at"], values["started_at_offset"])
+    end = edit_timestamp(values["ended_at"], values["ended_at_offset"])
+    if end <= start:
+        raise ValueError("Check-out muss nach dem Check-in liegen.")
+    if end > (now or datetime.now(timezone.utc)).astimezone(timezone.utc):
+        raise ValueError("Vergangene Einträge dürfen nicht in der Zukunft liegen.")
+    try:
+        revision = int(values["revision"])
+    except ValueError:
+        raise ValueError("Ungültiger Bearbeitungsstand. Formular neu öffnen.") from None
+    stamp = lambda value: value.isoformat().replace("+00:00", "Z")
+    with connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT * FROM local_clock_entries WHERE id = ?", (entry_id,)).fetchone()
+        if row is None:
+            raise LookupError("Eintrag nicht gefunden.")
+        if row["ended_at"] is None:
+            raise ValueError("Laufende Einträge können nicht bearbeitet werden.")
+        current = connection.execute("SELECT clock_revision FROM local_settings WHERE id = 1").fetchone()[0]
+        if revision != current:
+            raise RuntimeError("Die Zeiterfassung wurde inzwischen geändert. Formular neu öffnen.")
+        for name, value in (("started_at", start), ("ended_at", end)):
+            original_date = datetime.fromisoformat(row[name]).astimezone(BERLIN).date()
+            if value.astimezone(BERLIN).date() != original_date:
+                raise ValueError("Änderungen sind nur am ursprünglichen Tag des Eintrags möglich.")
+        overlap = connection.execute(
+            "SELECT id FROM local_clock_entries WHERE id != ? AND started_at < ? AND (ended_at IS NULL OR ended_at > ?) LIMIT 1",
+            (entry_id, stamp(end), stamp(start)),
+        ).fetchone()
+        if overlap:
+            raise ValueError("Die Zeiten überschneiden sich mit einem anderen Eintrag.")
+        connection.execute("UPDATE local_clock_entries SET started_at = ?, ended_at = ? WHERE id = ?",
+                           (stamp(start), stamp(end), entry_id))
+        connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
+
+
+def delete_entry(path: Path, entry_id: int, revision: str) -> None:
+    """Abgeschlossenen Eintrag atomar und nur mit aktuellem Formular löschen."""
+    try:
+        expected = int(revision)
+    except ValueError:
+        raise ValueError("Ungültiger Bearbeitungsstand. Bestätigung neu öffnen.") from None
+    with connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT ended_at FROM local_clock_entries WHERE id = ?", (entry_id,)).fetchone()
+        if row is None:
+            raise LookupError("Eintrag nicht gefunden.")
+        if row["ended_at"] is None:
+            raise ValueError("Laufende Einträge können erst nach dem Auschecken gelöscht werden.")
+        current = connection.execute("SELECT clock_revision FROM local_settings WHERE id = 1").fetchone()[0]
+        if expected != current:
+            raise RuntimeError("Die Zeiterfassung wurde inzwischen geändert. Bestätigung neu öffnen.")
+        connection.execute("DELETE FROM local_clock_entries WHERE id = ?", (entry_id,))
+        connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
+
+
 def day_totals(intervals: list[tuple[datetime, datetime]]) -> dict:
     """Berechneter Pausenabzug, keine erfundenen tatsächlichen Pausenbuchungen.
 
@@ -209,6 +317,7 @@ def period_balances(days: list[dict], tracking_start: date | None,
 
 def clock_state(path: Path, page: int = 1, now: datetime | None = None,
                 year: int | None = None, month: int | None = None) -> dict:
+    months_per_page = 3
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     with connect(path) as connection:
         connection.execute("BEGIN")
@@ -228,10 +337,22 @@ def clock_state(path: Path, page: int = 1, now: datetime | None = None,
             clauses.append("substr(berlin_period(started_at), 6, 2) = ?")
             parameters.append(f"{month:02d}")
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        filtered_count = connection.execute("SELECT COUNT(*) FROM local_clock_entries" + where, parameters).fetchone()[0]
-        pages = max(1, (filtered_count + 19) // 20)
+        month_counts = connection.execute(
+            "SELECT berlin_period(started_at) AS period, COUNT(*) AS total FROM local_clock_entries"
+            + where + " GROUP BY period ORDER BY period DESC", parameters,
+        ).fetchall()
+        filtered_count = sum(item["total"] for item in month_counts)
+        pages = max(1, (len(month_counts) + months_per_page - 1) // months_per_page)
         page = min(max(1, page), pages)
-        rows = connection.execute("SELECT * FROM local_clock_entries" + where + " ORDER BY started_at DESC, id DESC LIMIT 20 OFFSET ?", (*parameters, (page - 1) * 20)).fetchall()
+        month_offset = (page - 1) * months_per_page
+        visible_periods = [item["period"] for item in month_counts[month_offset:month_offset + months_per_page]]
+        preceding_count = sum(item["total"] for item in month_counts[:month_offset])
+        # Ganze Monate anzeigen, unabhängig von der Anzahl ihrer Einträge.
+        rows = connection.execute(
+            "SELECT * FROM local_clock_entries WHERE berlin_period(started_at) IN ("
+            + ",".join("?" for _ in visible_periods) + ") ORDER BY started_at DESC, id DESC",
+            visible_periods,
+        ).fetchall() if visible_periods else []
         active_row = connection.execute("SELECT * FROM local_clock_entries WHERE ended_at IS NULL").fetchone()
         today = now.astimezone(BERLIN).date()
         first_start = connection.execute("SELECT MIN(started_at) FROM local_clock_entries WHERE started_at <= ?", (now.isoformat().replace("+00:00", "Z"),)).fetchone()[0]
@@ -272,8 +393,8 @@ def clock_state(path: Path, page: int = 1, now: datetime | None = None,
         "filtered_count": filtered_count, "selected_year": year, "selected_month": month,
         "years": sorted({int(period[:4]) for period in periods} | ({year} if year else set()), reverse=True),
         "filter_query": (f"&year={year}" if year is not None else "") + (f"&month={month}" if month is not None else ""),
-        "first": (page - 1) * 20 + 1 if filtered_count else 0,
-        "last": min(page * 20, filtered_count), "today_minutes": today_seconds // 60,
+        "first": preceding_count + 1 if filtered_count else 0,
+        "last": preceding_count + len(rows), "today_minutes": today_seconds // 60,
         "today_seconds": today_seconds,
         "today_summary": today_summary,
         "balances": period_balances(days, tracking_start, today, load_preferences(path)),

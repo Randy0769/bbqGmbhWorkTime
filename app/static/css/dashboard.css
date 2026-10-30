@@ -486,6 +486,27 @@ h1 span {
     color: #fff;
 }
 
+.entry-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.entry-actions form {
+    margin: 0;
+}
+
+.danger-button {
+    background: #41262f;
+    color: #ffbdbd;
+    border-color: #71414a;
+}
+
+.danger-button:hover {
+    background: #61323e;
+    color: #fff;
+}
+
 .table-scroll {
     overflow-x: auto;
 }
@@ -940,6 +961,26 @@ tbody tr:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 20px;
     margin: 22px 0;
+}
+
+.entry-datetime {
+    min-width: 0;
+    margin: 0;
+    padding: 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+}
+
+.entry-datetime legend {
+    padding: 0 8px;
+    font-weight: 650;
+}
+
+.entry-time {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 16px;
 }
 
 label {

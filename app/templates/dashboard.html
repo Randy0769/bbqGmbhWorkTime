@@ -2,12 +2,11 @@
 {% block content %}
 <section class="page-heading">
     <div><h1>Meine Arbeitszeit<span>.</span></h1></div>
-    <span class="date-chip">{{ clock.today|local_date }} <span>· Europe/Berlin</span></span>
 </section>
 {% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
 <section class="clock-panel card" aria-label="Ein- und Auschecken">
     <div class="clock-copy">
-        <span class="status-pill {{ 'is-active' if clock.active else '' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Arbeitszeit läuft' if clock.active else 'Bereit für deinen Arbeitstag' }}</span>
+        {% if clock.active %}<span class="status-pill is-active"><span class="status-dot" aria-hidden="true"></span>Arbeitszeit läuft</span>{% endif %}
         <h2>{{ clock.active.duration_minutes|duration if clock.active else 'Deine Zeit beginnt hier.' }}</h2>
         {% if clock.active %}<p>Eingecheckt seit {{ clock.active.started_at|local_datetime }} · ohne Pausenabzug</p>{% endif %}
     </div>
@@ -50,6 +49,8 @@
     </div>
 </section>
 <section class="card history-panel" aria-labelledby="entries-heading">
+    {% if request.query_params.get('updated') == '1' %}<p class="success-message" role="status">Eintrag gespeichert. Pausen und Salden wurden aktualisiert.</p>{% endif %}
+    {% if request.query_params.get('deleted') == '1' %}<p class="success-message" role="status">Eintrag gelöscht. Pausen und Salden wurden aktualisiert.</p>{% endif %}
     <div class="section-heading"><div><p class="eyebrow">DEIN VERLAUF</p><h2 id="entries-heading">Bisherige Einträge <span class="count-chip">{{ clock.filtered_count }}</span></h2></div><a class="secondary-button" href="/?page={{ clock.page }}{{ clock.filter_query }}#entries-heading">Ansicht aktualisieren ↻</a></div>
     <form class="history-filters" method="get" action="/#entries-heading" aria-label="Einträge nach Jahr und Monat auswählen">
         <label>Jahr<select name="year"><option value="0">Alle Jahre</option>{% for year in clock.years %}<option value="{{ year }}" {% if clock.selected_year == year %}selected{% endif %}>{{ year }}</option>{% endfor %}</select></label>
@@ -74,13 +75,19 @@
         </summary>
     <div class="table-scroll"><table>
         <caption class="sr-only">{{ entry_date|local_date }}: gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
-        <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Dauer ohne Abzug</th><th scope="col">Status</th></tr></thead>
+        <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Dauer ohne Abzug</th><th scope="col">Status</th><th scope="col">Aktion</th></tr></thead>
         <tbody>{% for entry in day_entries %}<tr>
             <td class="entry-date"><time datetime="{{ entry.started_at }}">{{ entry.started_at|local_date }}</time></td>
             <td>{{ entry.started_at|local_time }}</td>
             <td>{% if entry.ended_at %}{{ entry.ended_at|local_time }}{% if entry.ended_at|local_date != entry.started_at|local_date %}<span class="cell-detail">{{ entry.ended_at|local_date }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
             <td class="entry-duration">{{ entry.duration_minutes|duration }}</td>
             <td><span class="status-pill {{ 'is-active' if not entry.ended_at else 'is-complete' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Läuft' if not entry.ended_at else 'Abgeschlossen' }}</span></td>
+            <td>{% if entry.ended_at %}<div class="entry-actions"><a class="secondary-button" href="/entries/{{ entry.id }}/edit" aria-label="Eintrag vom {{ entry.started_at|local_datetime }} bearbeiten">Bearbeiten</a>
+                <form method="post" action="/entries/{{ entry.id }}/delete">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="revision" value="{{ clock.revision }}">
+                    <button type="submit" class="secondary-button danger-button" aria-label="Eintrag vom {{ entry.started_at|local_datetime }} löschen">Löschen</button>
+                </form></div>{% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>{% endfor %}</tbody>
     </table></div>
     </details>
