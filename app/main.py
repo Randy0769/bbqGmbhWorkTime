@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from app.config import BASE_DIR, Settings, get_settings
 from app.db import connect, init_db
 from app.time_rules import Evaluation, Workday, evaluate
-from app.local_tracker import Preferences, clock_action, clock_state, daily_watchdog, load_preferences, save_preferences
+from app.local_tracker import Preferences, clock_action, clock_state, daily_watchdog, load_preferences, save_preferences, load_edit_entry, update_entry, delete_entry, parse_entry_datetime
 
 
 def format_duration(value: int | None, signed: bool = False) -> str:
@@ -41,7 +41,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     templates.env.filters["local_datetime"] = lambda value: datetime.fromisoformat(value).strftime("%d.%m.%Y %H:%M %z")
     templates.env.filters["local_date"] = lambda value: datetime.fromisoformat(value).strftime("%d.%m.%Y")
     templates.env.filters["weekday"] = lambda value: ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"][datetime.fromisoformat(value).weekday()]
-    templates.env.filters["local_time"] = lambda value: datetime.fromisoformat(value).strftime("%H:%M:%S")
+    templates.env.filters["local_time"] = lambda value: datetime.fromisoformat(value).strftime("%H:%M")
     labels = {
         "violation": "Verletzung", "warning": "Warnung", "info": "Hinweis",
         "unchecked": "Nicht vollständig geprüft", "incomplete": "Teilprüfung",
@@ -119,6 +119,86 @@ def create_app(settings: Settings | None = None) -> FastAPI:
               year: int = Query(default=0, ge=0, le=9998),
               month: int = Query(default=0, ge=0, le=12)):
         return render(request, page=page, year=year or None, month=month or None)
+
+    def edit_response(request, entry_id, values, errors=None, status_code=200):
+        values = dict(values)
+        for key in ("started_at", "ended_at"):
+            try:
+                local = parse_entry_datetime(values[key])
+                for part, pattern in (("date", "%Y-%m-%d"), ("hour", "%H"), ("minute", "%M")):
+                    values.setdefault(key + "_" + part, local.strftime(pattern))
+            except ValueError:
+                pass
+            try:
+                values[key + "_display_date"] = datetime.strptime(values.get(key + "_date", ""), "%Y-%m-%d").strftime("%d.%m.%Y")
+            except ValueError:
+                values[key + "_display_date"] = "Ungültiges Datum – Formular neu öffnen."
+        return templates.TemplateResponse(
+            request=request, name="edit_entry.html", status_code=status_code,
+            context={**common_context(), "entry_id": entry_id, "values": values, "errors": errors or []},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.get("/entries/{entry_id}/edit", response_class=HTMLResponse, include_in_schema=False)
+    def edit_entry_page(request: Request, entry_id: int):
+        try:
+            values = load_edit_entry(settings.database_path, entry_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError as error:
+            return render(request, errors=[str(error)], status_code=409)
+        return edit_response(request, entry_id, values)
+
+    @application.post("/entries/{entry_id}/edit", response_class=HTMLResponse, include_in_schema=False)
+    async def save_entry(request: Request, entry_id: int):
+        async with request.form(max_fields=16, max_files=0) as form:
+            verify_csrf(form)
+            values = {key: str(form.get(key, "")) for key in
+                      ("started_at", "ended_at", "started_at_offset", "ended_at_offset", "revision")}
+            for key in ("started_at", "ended_at"):
+                if key + "_date" in form:
+                    for part in ("date", "hour", "minute"):
+                        values[key + "_" + part] = str(form.get(key + "_" + part, ""))
+                    values[key] = (values[key + "_date"] + "T" + values[key + "_hour"]
+                                   + ":" + values[key + "_minute"] + ":00")
+        try:
+            update_entry(settings.database_path, entry_id, values)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (ValueError, RuntimeError) as error:
+            return edit_response(request, entry_id, values, [str(error)],
+                                 status_code=409 if isinstance(error, RuntimeError) else 422)
+        # Nach dem Speichern weiterhin den Monat des Eintrags anzeigen.
+        start = parse_entry_datetime(values["started_at"])
+        return RedirectResponse(f"/?year={start.year}&month={start.month}&updated=1#entries-heading", status_code=303)
+
+    @application.get("/entries/{entry_id}/delete", response_class=HTMLResponse, include_in_schema=False)
+    def delete_entry_page(request: Request, entry_id: int):
+        try:
+            values = load_edit_entry(settings.database_path, entry_id)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ValueError:
+            return render(request, errors=["Laufende Einträge können erst nach dem Auschecken gelöscht werden."], status_code=409)
+        return templates.TemplateResponse(
+            request=request, name="delete_entry.html",
+            context={**common_context(), "entry_id": entry_id, "values": values},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @application.post("/entries/{entry_id}/delete", response_class=HTMLResponse, include_in_schema=False)
+    async def remove_entry(request: Request, entry_id: int):
+        async with request.form(max_fields=3, max_files=0) as form:
+            verify_csrf(form)
+            revision = str(form.get("revision", ""))
+        try:
+            delete_entry(settings.database_path, entry_id, revision)
+        except LookupError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except (ValueError, RuntimeError) as error:
+            return render(request, errors=[str(error)],
+                          status_code=409 if isinstance(error, RuntimeError) else 422)
+        return RedirectResponse("/?deleted=1#entries-heading", status_code=303)
 
     @application.post("/api/time-rules/evaluate", response_model=Evaluation, tags=["Arbeitszeitregeln"])
     def evaluate_workday(workday: Workday) -> Evaluation:

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><h1>Eintrag löschen?</h1></section>
+<form method="post" action="/entries/{{ entry_id }}/delete" class="card workday-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="revision" value="{{ values.revision }}">
+    <h2>Diesen Eintrag endgültig löschen?</h2>
+    <dl class="field-grid">
+        <div><dt>Check-in</dt><dd>{{ values.started_at|local_date }} · {{ values.started_at|local_time }}</dd></div>
+        <div><dt>Check-out</dt><dd>{{ values.ended_at|local_date }} · {{ values.ended_at|local_time }}</dd></div>
+    </dl>
+    <p class="form-hint">Dies kann nicht rückgängig gemacht werden. Pausen und Salden werden neu berechnet.</p>
+    <div class="actions"><button class="button danger-button" type="submit">Endgültig löschen</button><a href="/#entries-heading">Abbrechen</a></div>
+</form>
+{% endblock %}

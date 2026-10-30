@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero"><h1>Eintrag bearbeiten</h1></section>
+{% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+<form method="post" action="/entries/{{ entry_id }}/edit" class="card workday-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="revision" value="{{ values.revision }}">
+    <h2>Check-in und Check-out</h2>
+    <div class="field-grid">
+        {% for key, label in [('started_at', 'Check-in'), ('ended_at', 'Check-out')] %}
+        <fieldset class="entry-datetime">
+            <legend>{{ label }}</legend>
+            <p>Datum: <strong>{{ values[key ~ '_display_date'] }}</strong></p>
+            <input type="hidden" name="{{ key }}_date" value="{{ values.get(key ~ '_date', '') }}">
+            <div class="entry-time" role="group" aria-label="{{ label }}: Uhrzeit im 24-Stunden-Format">
+                {% for part, title, count in [('hour', 'Stunde', 24), ('minute', 'Minute', 60)] %}
+                <label for="{{ key }}_{{ part }}">{{ title }}<select id="{{ key }}_{{ part }}" name="{{ key }}_{{ part }}" required aria-label="{{ label }}: {{ title }}">
+                    {% for number in range(count) %}{% set text = '%02d'|format(number) %}<option value="{{ text }}" {% if values.get(key ~ '_' ~ part) == text %}selected{% endif %}>{{ text }}</option>{% endfor %}
+                </select></label>
+                {% endfor %}
+            </div>
+        </fieldset>
+        <input type="hidden" name="{{ key }}_offset" value="{{ values[key ~ '_offset'] }}">
+        {% endfor %}
+    </div>
+    <div class="actions"><button class="button" type="submit">Änderungen speichern</button><a href="/#entries-heading">Abbrechen</a>{% if errors %}<a href="/entries/{{ entry_id }}/edit">Formular neu öffnen</a>{% endif %}</div>
+</form>
+{% endblock %}
