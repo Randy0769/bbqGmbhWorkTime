@@ -9,8 +9,10 @@ from pydantic import ValidationError
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
 from app.config import BASE_DIR, Settings, get_settings
+from app import auth
 from app.db import connect, init_db
 from app.time_rules import Evaluation, Workday, evaluate
 from app.local_tracker import Preferences, clock_action, clock_state, daily_watchdog, load_preferences, save_preferences, load_edit_entry, update_entry, delete_entry, parse_entry_datetime
@@ -33,7 +35,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
 
     application = FastAPI(title=settings.title, version="0.3.0", lifespan=lifespan, docs_url=None, redoc_url=None)
-    csrf_token = secrets.token_urlsafe(32)
     application.state.settings = settings
     application.mount("/static", StaticFiles(directory=BASE_DIR / "app" / "static"), name="static")
     templates = Jinja2Templates(directory=BASE_DIR / "app" / "templates")
@@ -48,20 +49,108 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "green": "Grün", "yellow": "Gelb", "red": "Rot",
     }
 
-    def verify_csrf(form):
-        if not secrets.compare_digest(str(form.get("csrf_token", "")), csrf_token):
+    @application.middleware("http")
+    async def require_login(request: Request, call_next):
+        if request.url.path.startswith("/static/"):
+            return await call_next(request)
+        token = request.cookies.get(auth.COOKIE_NAME, "")
+        session, username = await run_in_threadpool(auth.auth_state, settings.database_path, token)
+        request.state.session = session
+        request.state.username = username
+        public = request.url.path in ("/login", "/setup")
+        if not public and not (session and session["authenticated"]):
+            if request.method in ("GET", "HEAD"):
+                response = RedirectResponse("/login" if username else "/setup", status_code=303)
+            else:
+                response = HTMLResponse("Anmeldung erforderlich. Bitte neu anmelden.", status_code=401)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
+
+    def verify_csrf(form, request):
+        session = request.state.session
+        if not session or not secrets.compare_digest(str(form.get("csrf_token", "")), session["csrf_token"]):
             raise HTTPException(status_code=403, detail="Ungültiges Formular. Seite neu laden.")
 
-    def common_context():
-        return {"title": settings.title, "labels": labels, "csrf_token": csrf_token,
+    def common_context(request):
+        session = request.state.session
+        return {"title": settings.title, "labels": labels,
+            "csrf_token": session["csrf_token"] if session else "",
+            "authenticated": bool(session and session["authenticated"]), "username": request.state.username,
             "months": ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]}
+
+    def set_session_cookie(response, request, token):
+        response.set_cookie(auth.COOKIE_NAME, token, max_age=auth.SESSION_SECONDS,
+                            httponly=True, samesite="strict", secure=request.url.scheme == "https", path="/")
+        return response
+
+    def login_response(request, setup=False, errors=None, status_code=200):
+        token = None
+        if not request.state.session:
+            token = auth.anonymous_session(settings.database_path)
+            request.state.session, _ = auth.auth_state(settings.database_path, token)
+        response = templates.TemplateResponse(
+            request=request, name="login.html", status_code=status_code,
+            context={**common_context(request), "setup": setup, "errors": errors or []},
+        )
+        return set_session_cookie(response, request, token) if token else response
+
+    @application.get("/setup", response_class=HTMLResponse, include_in_schema=False)
+    def setup_page(request: Request):
+        if request.state.username:
+            return RedirectResponse("/login", status_code=303)
+        return login_response(request, setup=True)
+
+    @application.get("/login", response_class=HTMLResponse, include_in_schema=False)
+    def login_page(request: Request):
+        if not request.state.username:
+            return RedirectResponse("/setup", status_code=303)
+        if request.state.session and request.state.session["authenticated"]:
+            return RedirectResponse("/", status_code=303)
+        return login_response(request)
+
+    @application.post("/setup", response_class=HTMLResponse, include_in_schema=False)
+    @application.post("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def sign_in(request: Request):
+        setup = request.url.path == "/setup"
+        if setup and request.state.username:
+            return RedirectResponse("/login", status_code=303)
+        if not setup and not request.state.username:
+            return RedirectResponse("/setup", status_code=303)
+        async with request.form(max_fields=5, max_files=0) as form:
+            verify_csrf(form, request)
+            username = str(form.get("username", ""))
+            password = str(form.get("password", ""))
+            confirmation = str(form.get("confirmation", ""))
+        try:
+            if setup:
+                token = await run_in_threadpool(auth.setup_account, settings.database_path, username, password, confirmation)
+            else:
+                token = await run_in_threadpool(auth.login, settings.database_path, username, password, request.cookies.get(auth.COOKIE_NAME, ""))
+        except ValueError as error:
+            return await run_in_threadpool(login_response, request, setup, [str(error)],
+                                           429 if isinstance(error, auth.LoginBlocked) else 422 if setup else 401)
+        return set_session_cookie(RedirectResponse("/", status_code=303), request, token)
+
+    @application.post("/logout", include_in_schema=False)
+    async def sign_out(request: Request):
+        async with request.form(max_fields=1, max_files=0) as form:
+            verify_csrf(form, request)
+        await run_in_threadpool(auth.destroy_session, settings.database_path, request.cookies.get(auth.COOKIE_NAME, ""))
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(auth.COOKIE_NAME, path="/")
+        return response
 
     def render(request, page=1, errors=None, status_code=200, year=None, month=None):
         clock = clock_state(settings.database_path, page, year=year, month=month)
         preferences = load_preferences(settings.database_path)
         return templates.TemplateResponse(
             request=request, name="dashboard.html", status_code=status_code,
-            context={**common_context(), "errors": errors or [],
+            context={**common_context(request), "errors": errors or [],
                      "clock": clock, "preferences": preferences,
                      "watchdog": daily_watchdog(clock["today_seconds"], preferences.weekly_hours)},
             headers={"Cache-Control": "no-store"},
@@ -74,7 +163,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def settings_page(request: Request):
         return templates.TemplateResponse(
             request=request, name="settings.html",
-            context={**common_context(), "values": saved_defaults(), "errors": [],
+            context={**common_context(request), "values": saved_defaults(), "errors": [],
                      "saved": request.query_params.get("saved") == "1"},
             headers={"Cache-Control": "no-store"},
         )
@@ -82,7 +171,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/settings", response_class=HTMLResponse, include_in_schema=False)
     async def update_settings(request: Request):
         async with request.form(max_fields=30, max_files=0) as form:
-            verify_csrf(form)
+            verify_csrf(form, request)
             values = {key: str(form.get(key, "")) for key in Preferences().form_values()}
         try:
             preferences = Preferences.model_validate({
@@ -96,7 +185,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             errors = [item["msg"] for item in error.errors()] if isinstance(error, ValidationError) else ["Ungültige Wochenarbeitszeit."]
             return templates.TemplateResponse(
                 request=request, name="settings.html", status_code=422,
-                context={**common_context(), "values": values, "errors": errors, "saved": False},
+                context={**common_context(request), "values": values, "errors": errors, "saved": False},
                 headers={"Cache-Control": "no-store"},
             )
         save_preferences(settings.database_path, preferences)
@@ -105,7 +194,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/clock", include_in_schema=False)
     async def update_clock(request: Request):
         async with request.form(max_fields=5, max_files=0) as form:
-            verify_csrf(form)
+            verify_csrf(form, request)
             action = str(form.get("action", ""))
             revision = str(form.get("revision", ""))
         try:
@@ -135,7 +224,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 values[key + "_display_date"] = "Ungültiges Datum – Formular neu öffnen."
         return templates.TemplateResponse(
             request=request, name="edit_entry.html", status_code=status_code,
-            context={**common_context(), "entry_id": entry_id, "values": values, "errors": errors or []},
+            context={**common_context(request), "entry_id": entry_id, "values": values, "errors": errors or []},
             headers={"Cache-Control": "no-store"},
         )
 
@@ -152,7 +241,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.post("/entries/{entry_id}/edit", response_class=HTMLResponse, include_in_schema=False)
     async def save_entry(request: Request, entry_id: int):
         async with request.form(max_fields=16, max_files=0) as form:
-            verify_csrf(form)
+            verify_csrf(form, request)
             values = {key: str(form.get(key, "")) for key in
                       ("started_at", "ended_at", "started_at_offset", "ended_at_offset", "revision")}
             for key in ("started_at", "ended_at"):
@@ -182,14 +271,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return render(request, errors=["Laufende Einträge können erst nach dem Auschecken gelöscht werden."], status_code=409)
         return templates.TemplateResponse(
             request=request, name="delete_entry.html",
-            context={**common_context(), "entry_id": entry_id, "values": values},
+            context={**common_context(request), "entry_id": entry_id, "values": values},
             headers={"Cache-Control": "no-store"},
         )
 
     @application.post("/entries/{entry_id}/delete", response_class=HTMLResponse, include_in_schema=False)
     async def remove_entry(request: Request, entry_id: int):
         async with request.form(max_fields=3, max_files=0) as form:
-            verify_csrf(form)
+            verify_csrf(form, request)
             revision = str(form.get("revision", ""))
         try:
             delete_entry(settings.database_path, entry_id, revision)
@@ -199,6 +288,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return render(request, errors=[str(error)],
                           status_code=409 if isinstance(error, RuntimeError) else 422)
         return RedirectResponse("/?deleted=1#entries-heading", status_code=303)
+
+    @application.post("/settings/password", response_class=HTMLResponse, include_in_schema=False)
+    async def update_password(request: Request):
+        async with request.form(max_fields=4, max_files=0) as form:
+            verify_csrf(form, request)
+            current = str(form.get("current_password", ""))
+            password = str(form.get("password", ""))
+            confirmation = str(form.get("confirmation", ""))
+        try:
+            token = await run_in_threadpool(auth.change_password, settings.database_path, current, password, confirmation)
+        except ValueError as error:
+            return templates.TemplateResponse(
+                request=request, name="settings.html",
+                status_code=429 if isinstance(error, auth.LoginBlocked) else 422,
+                context={**common_context(request), "values": saved_defaults(), "errors": [], "saved": False,
+                         "password_errors": [str(error)]},
+            )
+        return set_session_cookie(RedirectResponse("/settings?password_saved=1#password", status_code=303), request, token)
 
     @application.post("/api/time-rules/evaluate", response_model=Evaluation, tags=["Arbeitszeitregeln"])
     def evaluate_workday(workday: Workday) -> Evaluation:

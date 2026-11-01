@@ -10,7 +10,7 @@
 <body>
     <header class="site-header">
         <a class="brand" href="/" aria-label="BBQ TimeTracker Startseite"><span class="brand-icon" aria-hidden="true">◷</span> BBQ <span>TimeTracker</span></a>
-        <nav class="main-nav" aria-label="Hauptnavigation"><a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Übersicht</a><a href="/settings" {% if request.url.path == '/settings' %}aria-current="page"{% endif %}>Einstellungen</a></nav>
+        {% if authenticated %}<nav class="main-nav" aria-label="Hauptnavigation"><a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Übersicht</a><a href="/settings" {% if request.url.path.startswith('/settings') %}aria-current="page"{% endif %}>Einstellungen</a><form method="post" action="/logout"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button type="submit" class="secondary-button">Abmelden</button></form></nav>{% endif %}
     </header>
     <main id="main-content">{% block content %}{% endblock %}</main>
 </body>
