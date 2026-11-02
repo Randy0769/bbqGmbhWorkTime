@@ -14,6 +14,7 @@ from app.time_rules import BERLIN, StrictModel, Thresholds
 
 class HalfHourThresholds(Thresholds):
     @model_validator(mode="after")
+    # Fuer alle Ampelgrenzen ausschliesslich volle 30-Minuten-Schritte zulassen.
     def validate_half_hours(self):
         if any(value % 30 != 0 for value in self.model_dump().values()):
             raise ValueError("Gleitzeitgrenzen sind nur in halben Stunden (30-Minuten-Schritten) möglich.")
@@ -23,20 +24,20 @@ class HalfHourThresholds(Thresholds):
 class Preferences(StrictModel):
     weekly_hours: Literal[30, 35, 40] = 40
     holiday_region: Literal["BW"] = "BW"
-    opening_balance_minutes: int = Field(default=0, ge=-600000, le=600000)
     thresholds: HalfHourThresholds = Field(default_factory=HalfHourThresholds)
     daily_thresholds: HalfHourThresholds = Field(default_factory=lambda: HalfHourThresholds(
         negative_red=-120, negative_yellow=-60, positive_yellow=60, positive_red=120,
     ))
 
+    # Wochenmodell und Periodengrenzen als Zeichenketten fuer HTML-Formulare liefern.
     def form_values(self) -> dict[str, str]:
         return {
             "weekly_hours": str(self.weekly_hours),
-            "opening_balance_minutes": str(self.opening_balance_minutes),
             **{key: str(value) for key, value in self.thresholds.model_dump().items()},
         }
 
 
+# Tagesnettozeit gegen Tagessoll und Zehn-Stunden-Grenze fuer die Anzeige bewerten.
 def daily_watchdog(today_seconds: int, weekly_hours: int) -> dict:
     """Feste Tageswarnung für berechnete Nettozeit, unabhängig vom Kalendertag."""
     target_minutes = weekly_hours * 60 // 5
@@ -50,17 +51,54 @@ def daily_watchdog(today_seconds: int, weekly_hours: int) -> dict:
     }
 
 
+# Warnungen aus erfasster Arbeit und Pausen ableiten und nach Schweregrad sortieren.
+def dashboard_warnings(state: dict, preferences: Preferences) -> list[dict]:
+    findings = []
+
+    # Jede Warnung mit dem Tagesdatum fuer ihre Identifikation im Browser versehen.
+    def add(code, severity, message):
+        findings.append({"code": code, "severity": severity, "message": message, "date": state["today"][:10]})
+
+    summary = state["today_summary"]
+    # Warnungen bewerten erfasste Arbeit, nicht die durch Zusatzabzüge reduzierte Nettozeit.
+    actual = summary["gross_seconds"]
+    active = state["active"] is not None
+    if actual > 10 * 3600:
+        add("daily_max", "violation", "Über 10 Stunden Arbeit erfasst. Bitte prüfen und bestätigte Verstöße dem Vorgesetzten melden (§ 3 ArbZG).")
+    if active and 570 * 60 <= actual <= 600 * 60:
+        remaining = (600 * 60 - actual + 59) // 60
+        message = f"In {remaining} Arbeitsminuten sind 10 Stunden erreicht." if remaining else "10 Stunden Arbeit sind erreicht."
+        add("daily_max_soon", "warning", message + " Arbeit rechtzeitig beenden (§ 3 ArbZG).")
+    required = 45 * 60 if actual > 9 * 3600 else 30 * 60 if actual > 6 * 3600 else 0
+    missing = max(0, required - summary["credited_break_seconds"])
+    if summary["long_work_stretch"]:
+        message = "Sie haben über 6 Stunden ohne eine Pause von mindestens 15 minuten gearbeitet."
+        if missing:
+            message += f" Heute fehlen noch {(missing + 59) // 60} Minuten Pause."
+        add("continuous_work", "violation", message + " Bitte prüfen und bestätigte Verstöße dem Vorgesetzten melden (§ 4 ArbZG).")
+    elif missing:
+        message = f"Heute fehlen noch {(missing + 59) // 60} Minuten erfasste Pause."
+        message += " Bitte Pause einlegen (§ 4 ArbZG)." if active else " Bitte prüfen und bestätigte Verstöße dem Vorgesetzten melden (§ 4 ArbZG)."
+        add("break_total", "warning" if active else "violation", message)
+    today = datetime.fromisoformat(state["today"]).date()
+    if actual and (today.weekday() == 6 or today in holidays.Germany(subdiv="BW", years=today.year)):
+        add("restricted_day", "warning", "Arbeit am Sonn- oder Feiertag erfasst. Bitte Ausnahme und Ersatzruhetag mit dem Vorgesetzten klären (§§ 9–11 ArbZG).")
+    priority = {"violation": 0, "warning": 1, "info": 2}
+    return sorted(findings, key=lambda finding: priority[finding["severity"]])
+
+
+# Gespeicherte Wochenarbeitszeit und beide Gruppen von Ampelgrenzen laden.
 def load_preferences(path: Path) -> Preferences:
     with connect(path) as connection:
         row = connection.execute("SELECT * FROM local_settings WHERE id = 1").fetchone()
     return Preferences(
         weekly_hours=row["weekly_hours"], holiday_region="BW",
-        opening_balance_minutes=row["opening_balance_minutes"],
         thresholds=HalfHourThresholds(**{key: row[key] for key in Thresholds.model_fields}),
         daily_thresholds=HalfHourThresholds(**{key: row[f"daily_{key}"] for key in Thresholds.model_fields}),
     )
 
 
+# Validierte Einstellungen in die einzelne lokale Einstellungszeile schreiben.
 def save_preferences(path: Path, preferences: Preferences) -> None:
     values = preferences.model_dump(exclude={"thresholds", "daily_thresholds"})
     values.update(preferences.thresholds.model_dump())
@@ -72,12 +110,36 @@ def save_preferences(path: Path, preferences: Preferences) -> None:
         )
 
 
+# Einen offenen Eintrag nach 24 tatsaechlichen Stunden am exakten Grenzzeitpunkt beenden.
+def close_overdue_entries(path: Path, now: datetime | None = None) -> bool:
+    current_time = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    with connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute("SELECT id, started_at FROM local_clock_entries WHERE ended_at IS NULL").fetchone()
+        if row is None:
+            return False
+        deadline = datetime.fromisoformat(row["started_at"]).astimezone(timezone.utc) + timedelta(hours=24)
+        if current_time < deadline:
+            return False
+        # Auch nach einem ausgeschalteten Server am Grenzzeitpunkt schließen, nicht erst jetzt.
+        connection.execute(
+            "UPDATE local_clock_entries SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+            (deadline.isoformat().replace("+00:00", "Z"), row["id"]),
+        )
+        connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
+    return True
+
+
+# Ein- oder Auschecken atomar gegen aktuellen Zustand und Formularrevision pruefen.
 def clock_action(path: Path, action: str, revision: int, now: datetime | None = None) -> None:
     if action not in ("check_in", "check_out"):
         raise ValueError("Ungültige Aktion.")
-    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    close_overdue_entries(path, now)
+    timestamp = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     with connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
+        # Sperre und Revision verhindern, dass parallele Klicks denselben Stand verändern.
         current = connection.execute("SELECT * FROM local_settings WHERE id = 1").fetchone()
         if revision != current["clock_revision"]:
             raise ValueError("Die Zeiterfassung wurde bereits geändert. Bitte den aktuellen Status prüfen.")
@@ -88,6 +150,7 @@ def clock_action(path: Path, action: str, revision: int, now: datetime | None = 
             last_end = connection.execute("SELECT MAX(ended_at) FROM local_clock_entries").fetchone()[0]
             if last_end and timestamp < last_end:
                 raise ValueError("Die Systemzeit liegt vor dem letzten Arbeitsende. Windows-Uhrzeit prüfen.")
+            # Einstellungen beim Check-in als historischen Stand am Eintrag sichern.
             snapshot = {key: current[key] for key in current.keys() if key not in ("id", "clock_revision")}
             snapshot["holiday_region"] = "BW"
             connection.execute(
@@ -103,16 +166,23 @@ def clock_action(path: Path, action: str, revision: int, now: datetime | None = 
         connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
 
 
+# Unterstuetzte deutsche und ISO-Ortszeitformate ohne UTC-Offset einlesen.
 def parse_entry_datetime(value: str) -> datetime:
     """Deutsche Eingaben mit optionalen Sekunden sowie bestehende ISO-Werte lesen."""
-    for pattern in ("%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"):
+    # Feste Formate lehnen 24:00 ab, statt den Zeitpunkt auf den Folgetag zu verschieben.
+    for pattern in (
+        "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M",
+        "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+    ):
         try:
             return datetime.strptime(value.strip(), pattern)
         except ValueError:
             pass
-    return datetime.fromisoformat(value)
+    raise ValueError("Ungültiges Datums- oder Zeitformat.")
 
 
+# Ortszeit mit optionalem Offset eindeutig einem gueltigen UTC-Zeitpunkt zuordnen.
 def edit_timestamp(value: str, offset: str = "") -> datetime:
     """Berliner Ortszeit sekundengenau prüfen, inklusive Sommerzeitwechsel."""
     try:
@@ -124,6 +194,7 @@ def edit_timestamp(value: str, offset: str = "") -> datetime:
     if offset not in ("", "+01:00", "+02:00"):
         raise ValueError("Ungültiger UTC-Offset.")
     candidates = set()
+    # Beide Vorkommen der Herbststunde prüfen; die Rückumwandlung erkennt Frühjahrslücken.
     for fold in (0, 1):
         aware = local.replace(tzinfo=BERLIN, fold=fold)
         utc = aware.astimezone(timezone.utc)
@@ -136,6 +207,7 @@ def edit_timestamp(value: str, offset: str = "") -> datetime:
     return candidates.pop()
 
 
+# Einen abgeschlossenen Eintrag samt Revision und gegebenenfalls DST-Offset laden.
 def load_edit_entry(path: Path, entry_id: int) -> dict:
     with connect(path) as connection:
         connection.execute("BEGIN")
@@ -149,22 +221,89 @@ def load_edit_entry(path: Path, entry_id: int) -> dict:
     for name in ("started_at", "ended_at"):
         local = datetime.fromisoformat(row[name]).astimezone(BERLIN)
         values[name] = local.strftime("%Y-%m-%dT%H:%M:%S")
+        # Bei doppelten Ortszeiten das tatsächlich gespeicherte Vorkommen im Formular erhalten.
         ambiguous = local.replace(fold=0).utcoffset() != local.replace(fold=1).utcoffset()
         values[name + "_offset"] = local.isoformat()[-6:] if ambiguous else ""
     return values
 
 
+# Eine optionale innenliegende Pause als Luecke zwischen zwei Arbeitsintervallen abbilden.
+def entry_intervals(start: datetime, end: datetime, values: dict) -> list[tuple[datetime, datetime]]:
+    pause_start = values.get("pause_started_at", "").strip()
+    pause_end = values.get("pause_ended_at", "").strip()
+    if not pause_start and not pause_end:
+        return [(start, end)]
+    if not pause_start or not pause_end:
+        raise ValueError("Bitte Beginn und Ende der Pause vollständig eingeben.")
+    pause_start = edit_timestamp(pause_start, values.get("pause_started_at_offset", ""))
+    pause_end = edit_timestamp(pause_end, values.get("pause_ended_at_offset", ""))
+    if not start < pause_start < pause_end < end:
+        raise ValueError("Die Pause muss innerhalb des Arbeitsabschnitts liegen und ihr Ende nach ihrem Beginn.")
+    # Eine echte Pause wird als Lücke zwischen zwei Arbeitsbuchungen gespeichert.
+    return [(start, pause_start), (pause_end, end)]
+
+
+# Vergangene Arbeitsintervalle ohne Ueberlappung speichern und die erste neue ID liefern.
+def create_entry(path: Path, values: dict, now: datetime | None = None) -> int:
+    start = edit_timestamp(values["started_at"], values.get("started_at_offset", ""))
+    end = edit_timestamp(values["ended_at"], values.get("ended_at_offset", ""))
+    if end <= start:
+        raise ValueError("Check-out muss nach dem Check-in liegen.")
+    if end - start > timedelta(hours=24):
+        raise ValueError("Ein Arbeitsabschnitt darf höchstens 24 Stunden dauern.")
+    if end > (now or datetime.now(timezone.utc)).astimezone(timezone.utc):
+        raise ValueError("Vergangene Einträge dürfen nicht in der Zukunft liegen.")
+    intervals = entry_intervals(start, end, values)
+    try:
+        revision = int(values["revision"])
+    except ValueError:
+        raise ValueError("Ungültiger Bearbeitungsstand. Formular neu öffnen.") from None
+    started_at = start.isoformat().replace("+00:00", "Z")
+    ended_at = end.isoformat().replace("+00:00", "Z")
+    with connect(path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute("SELECT * FROM local_settings WHERE id = 1").fetchone()
+        if revision != current["clock_revision"]:
+            raise RuntimeError("Die Zeiterfassung wurde inzwischen geändert. Formular neu öffnen.")
+        # Die gesamte Spanne einschließlich Pause freihalten; direkt angrenzende Zeiten zulassen.
+        overlap = connection.execute(
+            "SELECT id FROM local_clock_entries WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?) LIMIT 1",
+            (ended_at, started_at),
+        ).fetchone()
+        if overlap:
+            raise ValueError("Die Zeiten überschneiden sich mit einem anderen Eintrag.")
+        # Den Einstellungsstand der Buchung speichern, unabhängig von späteren Änderungen.
+        snapshot = {key: current[key] for key in current.keys() if key not in ("id", "clock_revision")}
+        snapshot["holiday_region"] = "BW"
+        first_id = None
+        for interval_start, interval_end in intervals:
+            cursor = connection.execute(
+                "INSERT INTO local_clock_entries (started_at, ended_at, settings_json) VALUES (?, ?, ?)",
+                (interval_start.isoformat().replace("+00:00", "Z"),
+                 interval_end.isoformat().replace("+00:00", "Z"), json.dumps(snapshot)),
+            )
+            if first_id is None:
+                first_id = cursor.lastrowid
+        connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
+        return first_id
+
+
+# Einen abgeschlossenen Eintrag unter Erhalt seiner ID und Einstellungen korrigieren.
 def update_entry(path: Path, entry_id: int, values: dict, now: datetime | None = None) -> None:
     start = edit_timestamp(values["started_at"], values["started_at_offset"])
     end = edit_timestamp(values["ended_at"], values["ended_at_offset"])
     if end <= start:
         raise ValueError("Check-out muss nach dem Check-in liegen.")
+    if end - start > timedelta(hours=24):
+        raise ValueError("Ein Arbeitsabschnitt darf höchstens 24 Stunden dauern.")
     if end > (now or datetime.now(timezone.utc)).astimezone(timezone.utc):
         raise ValueError("Vergangene Einträge dürfen nicht in der Zukunft liegen.")
+    intervals = entry_intervals(start, end, values)
     try:
         revision = int(values["revision"])
     except ValueError:
         raise ValueError("Ungültiger Bearbeitungsstand. Formular neu öffnen.") from None
+    # UTC-Zeitpunkte im kanonischen Datenbankformat mit Z-Suffix speichern.
     stamp = lambda value: value.isoformat().replace("+00:00", "Z")
     with connect(path) as connection:
         connection.execute("BEGIN IMMEDIATE")
@@ -186,11 +325,18 @@ def update_entry(path: Path, entry_id: int, values: dict, now: datetime | None =
         ).fetchone()
         if overlap:
             raise ValueError("Die Zeiten überschneiden sich mit einem anderen Eintrag.")
+        # Beim Teilen bleiben die ursprüngliche ID und der historische Einstellungsstand erhalten.
         connection.execute("UPDATE local_clock_entries SET started_at = ?, ended_at = ? WHERE id = ?",
-                           (stamp(start), stamp(end), entry_id))
+                           (stamp(intervals[0][0]), stamp(intervals[0][1]), entry_id))
+        if len(intervals) == 2:
+            connection.execute(
+                "INSERT INTO local_clock_entries (started_at, ended_at, settings_json) VALUES (?, ?, ?)",
+                (stamp(intervals[1][0]), stamp(intervals[1][1]), row["settings_json"]),
+            )
         connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
 
 
+# Nur abgeschlossene Eintraege mit aktueller Bestaetigungsrevision entfernen.
 def delete_entry(path: Path, entry_id: int, revision: str) -> None:
     """Abgeschlossenen Eintrag atomar und nur mit aktuellem Formular löschen."""
     try:
@@ -211,14 +357,15 @@ def delete_entry(path: Path, entry_id: int, revision: str) -> None:
         connection.execute("UPDATE local_settings SET clock_revision = clock_revision + 1 WHERE id = 1")
 
 
+# Intervalle zusammenfuehren und Brutto-, Pausen- und Nettozeiten sekundengenau berechnen.
 def day_totals(intervals: list[tuple[datetime, datetime]]) -> dict:
     """Berechneter Pausenabzug, keine erfundenen tatsächlichen Pausenbuchungen.
 
-    Mindestabzug so bestimmen, dass die resultierende Nettozeit die Schwellen
-    6/9 Stunden berücksichtigt. An der Schwelle nur anteilig abziehen, damit
-    z.B. aus 6:01 Stunden nicht plötzlich 5:31 Stunden werden.
+    An der Sechs-Stunden-Schwelle anteilig abziehen. Ab neun Stunden erfasster
+    Arbeit den vollen fehlenden Anteil von insgesamt 45 Minuten abziehen.
     """
     merged: list[list[datetime]] = []
+    # Überlappende Abschnitte zusammenführen, damit Arbeit nicht doppelt gezählt wird.
     for start, end in sorted(intervals):
         if end <= start:
             continue
@@ -228,6 +375,7 @@ def day_totals(intervals: list[tuple[datetime, datetime]]) -> dict:
             merged.append([start, end])
     gross = sum(int((end - start).total_seconds()) for start, end in merged)
     gaps = [int((right[0] - left[1]).total_seconds()) for left, right in zip(merged, merged[1:])]
+    # Nur einzelne Unterbrechungen ab 15 Minuten mindern den rechnerischen Zusatzabzug.
     credited = sum(gap for gap in gaps if gap >= 15 * 60)
     # Kürzere Lücken sind keine anrechenbare Ruhepause und setzen die
     # Warnung vor mehr als sechs Stunden ohne qualifizierende Pause nicht zurück.
@@ -239,15 +387,17 @@ def day_totals(intervals: list[tuple[datetime, datetime]]) -> dict:
         longest = max(longest, streak)
     net = gross
     if net > 6 * 3600:
+        # Oberhalb von sechs Stunden schrittweise abziehen, ohne unter sechs Stunden zu fallen.
         net = max(6 * 3600, gross - max(0, 30 * 60 - credited))
-    if net > 9 * 3600:
-        net = max(9 * 3600, gross - max(0, 45 * 60 - credited))
-    required = 45 * 60 if net > 9 * 3600 else 30 * 60 if net > 6 * 3600 else 0
+    if gross >= 9 * 3600:
+        net = gross - max(0, 45 * 60 - credited)
+    required = 45 * 60 if gross >= 9 * 3600 else 30 * 60 if net > 6 * 3600 else 0
     return {
         "gross_seconds": gross, "gap_seconds": sum(gaps),
         "credited_break_seconds": credited, "required_break_seconds": required,
         "automatic_break_seconds": gross - net, "net_seconds": net,
         "long_work_stretch": longest > 6 * 3600,
+        "current_work_stretch_seconds": streak,
         **{key: value // 60 for key, value in {
             "gross_minutes": gross, "gap_minutes": sum(gaps),
             "credited_break_minutes": credited, "automatic_break_minutes": gross - net,
@@ -256,6 +406,7 @@ def day_totals(intervals: list[tuple[datetime, datetime]]) -> dict:
     }
 
 
+# Buchungen auf Berliner Kalendertage verteilen und das Anrechnungsfenster auswerten.
 def daily_totals(rows, now: datetime) -> list[dict]:
     """Intervalle nach Berliner Kalendertag schneiden, Dauern immer in UTC."""
     days: dict = {}
@@ -264,6 +415,7 @@ def daily_totals(rows, now: datetime) -> list[dict]:
         end = min(datetime.fromisoformat(row["ended_at"]).astimezone(timezone.utc) if row["ended_at"] else now, now)
         while start < end:
             day = start.astimezone(BERLIN).date()
+            # Berliner Tage können bei Zeitumstellungen 23 oder 25 tatsächliche Stunden haben.
             midnight = datetime.combine(day + timedelta(days=1), time(), tzinfo=BERLIN).astimezone(timezone.utc)
             stop = min(end, midnight)
             bucket = days.setdefault(day, {"intervals": [], "ids": set()})
@@ -281,13 +433,15 @@ def daily_totals(rows, now: datetime) -> list[dict]:
         # konservativ vollständig von der Zeit im Anrechnungsfenster abziehen.
         credited = max(0, window["gross_seconds"] - totals["automatic_break_seconds"])
         result.append({"date": day.isoformat(), "ids": bucket["ids"],
+                       "outside_window_seconds": totals["gross_seconds"] - window["gross_seconds"],
                        "credited_seconds": credited, **totals})
     return result
 
 
+# Ist- und Sollzeit fuer Woche, Monat, Quartal und Jahr bis heute vergleichen.
 def period_balances(days: list[dict], tracking_start: date | None,
                     today: date, preferences: Preferences) -> list[dict]:
-    """Periodenveränderungen ohne mehrfachen Anfangssaldo, bis einschließlich heute."""
+    """Periodenveränderungen bis einschließlich heute."""
     starts = [
         ("Woche", today - timedelta(days=today.weekday())),
         ("Monat", today.replace(day=1)),
@@ -298,6 +452,7 @@ def period_balances(days: list[dict], tracking_start: date | None,
     limits = preferences.thresholds
     result = []
     for title, period_start in starts:
+        # Vor Beginn der Erfassung entstehen keine rückwirkenden Sollstunden.
         start = max(period_start, tracking_start) if tracking_start else None
         target = 0
         day = start
@@ -315,10 +470,12 @@ def period_balances(days: list[dict], tracking_start: date | None,
     return result
 
 
+# Einen konsistenten Dashboardstand mit Monatsverlauf, Tageswerten und Periodensalden laden.
 def clock_state(path: Path, page: int = 1, now: datetime | None = None,
                 year: int | None = None, month: int | None = None) -> dict:
     months_per_page = 3
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+    close_overdue_entries(path, now)
     with connect(path) as connection:
         connection.execute("BEGIN")
         revision = connection.execute("SELECT clock_revision FROM local_settings WHERE id = 1").fetchone()[0]
@@ -357,18 +514,19 @@ def clock_state(path: Path, page: int = 1, now: datetime | None = None,
         today = now.astimezone(BERLIN).date()
         first_start = connection.execute("SELECT MIN(started_at) FROM local_clock_entries WHERE started_at <= ?", (now.isoformat().replace("+00:00", "Z"),)).fetchone()[0]
         tracking_start = datetime.fromisoformat(first_start).astimezone(BERLIN).date() if first_start else None
-        # Ganze Tage laden, auch wenn weitere Einträge desselben Tages auf
-        # anderen Verlaufsseiten liegen. Sonst würde die Pause mehrfach abgezogen.
+        # Ganze Tage laden, auch wenn weitere Einträge auf anderen Verlaufsseiten liegen.
         balance_start = min(today.replace(month=1, day=1), today - timedelta(days=today.weekday()))
         boundaries = [datetime.combine(balance_start, time(), tzinfo=BERLIN).astimezone(timezone.utc)]
         for row in rows:
-            date = datetime.fromisoformat(row["started_at"]).astimezone(BERLIN).date()
-            boundaries.append(datetime.combine(date, time(), tzinfo=BERLIN).astimezone(timezone.utc))
+            entry_date = datetime.fromisoformat(row["started_at"]).astimezone(BERLIN).date()
+            boundaries.append(datetime.combine(entry_date, time(), tzinfo=BERLIN).astimezone(timezone.utc))
         summary_rows = connection.execute(
             "SELECT id, started_at, ended_at FROM local_clock_entries WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)",
             (now.isoformat().replace("+00:00", "Z"), min(boundaries).isoformat().replace("+00:00", "Z")),
         ).fetchall()
 
+    preferences = load_preferences(path)
+    # Eine Datenbankzeile mit Berliner Anzeigezeiten und laufender Dauer aufbereiten.
     def entry(row):
         start = datetime.fromisoformat(row["started_at"])
         end = datetime.fromisoformat(row["ended_at"]) if row["ended_at"] else None
@@ -382,6 +540,7 @@ def clock_state(path: Path, page: int = 1, now: datetime | None = None,
         }
 
     days = daily_totals(summary_rows, now)
+    completed_days = daily_totals([row for row in summary_rows if row["ended_at"] is not None], now)
     today_summary = next((day for day in days if day["date"] == today.isoformat()), day_totals([]))
     today_seconds = today_summary["net_seconds"]
     visible_ids = {row["id"] for row in rows}
@@ -395,11 +554,13 @@ def clock_state(path: Path, page: int = 1, now: datetime | None = None,
         "filter_query": (f"&year={year}" if year is not None else "") + (f"&month={month}" if month is not None else ""),
         "first": preceding_count + 1 if filtered_count else 0,
         "last": preceding_count + len(rows), "today_minutes": today_seconds // 60,
+        "today_credited_minutes": today_summary.get("credited_seconds", 0) // 60,
         "today_seconds": today_seconds,
         "today_summary": today_summary,
-        "balances": period_balances(days, tracking_start, today, load_preferences(path)),
+        "balances": period_balances(completed_days, tracking_start, today, preferences),
         "day_summaries": [day for day in days if day["ids"] & visible_ids],
         "month_minutes": sum(day["net_seconds"] for day in month_days) // 60,
+        "month_credited_minutes": sum(day["credited_seconds"] for day in month_days) // 60,
         "month_automatic_break_minutes": sum(day["automatic_break_seconds"] for day in month_days) // 60,
         "today": now.astimezone(BERLIN).isoformat(),
     }

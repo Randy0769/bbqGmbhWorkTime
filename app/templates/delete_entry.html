@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{# Loeschbestaetigung fuer einen abgeschlossenen Eintrag mit Sitzungsschutz und Revision. #}{% extends "base.html" %}
 {% block content %}
 <section class="hero"><h1>Eintrag löschen?</h1></section>
 <form method="post" action="/entries/{{ entry_id }}/delete" class="card workday-form">

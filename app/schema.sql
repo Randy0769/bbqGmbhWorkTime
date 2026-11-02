@@ -1,5 +1,6 @@
 -- Version 1. Zeitpunkte: UTC im Format YYYY-MM-DDTHH:MM:SSZ.
 -- Dauern und Salden: ganze Minuten. Keine Passwörter im Klartext.
+-- Basisschema vor den lokalen Erweiterungen; app.db setzt die Versionsnummer.
 
 CREATE TABLE users (
     id INTEGER PRIMARY KEY,
@@ -62,6 +63,7 @@ CREATE TABLE time_entries (
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- Der partielle Index erlaubt viele abgeschlossene, aber nur einen offenen Eintrag.
 CREATE UNIQUE INDEX one_running_entry_per_user ON time_entries(user_id) WHERE ended_at IS NULL;
 CREATE INDEX time_entries_user_start ON time_entries(user_id, started_at);
 
@@ -93,6 +95,7 @@ CREATE TABLE balance_adjustments (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 );
 
+-- Vorher-/Nachher-Staende und Begruendung dienen der Nachvollziehbarkeit von Aenderungen.
 CREATE TABLE audit_events (
     id INTEGER PRIMARY KEY,
     actor_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

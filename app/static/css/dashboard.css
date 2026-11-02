@@ -1,3 +1,4 @@
+/* Gemeinsame Farbvariablen halten Navigation, Formulare und Dashboard konsistent. */
 :root {
     color-scheme: dark;
     font-family: "Segoe UI", system-ui, sans-serif;
@@ -338,6 +339,7 @@ h1 span {
     margin-bottom: 16px;
 }
 
+/* Eine Statusvariable steuert Rand und Zahlenfarbe der jeweiligen Periodenkarte. */
 .balance-card {
     --balance-color: #90f0ca;
     border-top: 3px solid var(--balance-color);
@@ -375,6 +377,110 @@ h1 span {
     overflow: hidden;
 }
 
+.warnings-panel {
+    padding: 28px 0;
+    margin-bottom: 32px;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+}
+
+.warnings-panel h2 {
+    margin: 0;
+    font-size: 28px;
+    letter-spacing: 0;
+}
+
+.warnings-panel>.balance-heading {
+    flex-wrap: wrap;
+    gap: 16px;
+}
+
+.warnings-panel [hidden] {
+    display: none;
+}
+
+.warnings-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 12px;
+}
+
+.warning-item {
+    position: relative;
+    padding: 18px 60px 18px 22px;
+    border-left: 4px solid #f4c965;
+    background: #322e22;
+    overflow-wrap: anywhere;
+}
+
+.warning-dismiss {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.warning-dismiss:hover {
+    background: #ffffff14;
+}
+
+.warning-dismiss:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.warning-violation {
+    border-color: #ff939a;
+    background: #3b252c;
+}
+
+.warning-info {
+    border-color: #8ebce0;
+    background: #21323c;
+}
+
+.warning-level {
+    display: block;
+    margin-bottom: 6px;
+    color: #f4c965;
+    font-size: 12px;
+    font-weight: 650;
+}
+
+.warning-violation .warning-level {
+    color: #ff939a;
+}
+
+.warning-info .warning-level {
+    color: #8ebce0;
+}
+
+.warning-message {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.warnings-clear {
+    margin: 0;
+    padding: 24px 0;
+    color: var(--muted);
+}
+
+/* Statusfarbe und Sollposition werden vom Server bzw. der Live-Anzeige vorgegeben. */
 .watchdog {
     --watchdog-color: #90f0ca;
     margin-bottom: 32px;
@@ -408,7 +514,7 @@ h1 span {
     font-variant-numeric: tabular-nums;
 }
 
-.watchdog-duration>span {
+.watchdog-duration>span:not([data-watchdog-time]) {
     font-size: 12px;
     color: var(--muted);
     font-weight: 400;
@@ -1031,6 +1137,14 @@ select {
     gap: 22px;
     margin-top: 24px;
     font-size: 13px;
+}
+
+.history-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    min-width: 0;
 }
 
 .success-message,
