@@ -44,5 +44,19 @@
     <p class="form-hint">Gilt für Woche, Monat, Quartal und Jahr. Gelb muss näher an null liegen als Rot; Grenzwerte sind eingeschlossen. Anfangssaldo wird nicht zu den Periodensalden addiert.</p>
     <div class="actions"><button class="button" type="submit">Einstellungen speichern</button><a href="/">Zur Arbeitszeit</a></div>
 </form>
+<form method="post" action="/settings/password" class="card workday-form" id="password">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <h2>Passwort ändern</h2>
+    <p class="form-hint">Angemeldet als <strong>{{ username }}</strong>. Nach einer Änderung werden alle anderen Sitzungen abgemeldet.</p>
+    {% if request.query_params.get('password_saved') == '1' %}<p class="success-message" role="status">Passwort geändert.</p>{% endif %}
+    {% if password_errors %}<div class="error-message" role="alert"><ul>{% for error in password_errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+    <label>Aktuelles Passwort<input type="password" name="current_password" autocomplete="current-password" maxlength="128" required></label>
+    <div class="field-grid">
+        <label>Neues Passwort<input type="password" name="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>
+        <label>Neues Passwort wiederholen<input type="password" name="confirmation" autocomplete="new-password" minlength="6" maxlength="128" required></label>
+    </div>
+    <p class="form-hint">6 bis 128 Zeichen, keine Vorgaben zur Zeichenwahl.</p>
+    <div class="actions"><button class="button" type="submit">Passwort ändern</button></div>
+</form>
 <script src="{{ url_for('static', path='/js/sliders.js') }}" defer></script>
 {% endblock %}

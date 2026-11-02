@@ -82,6 +82,23 @@ button {
     gap: 8px;
 }
 
+.main-nav form {
+    margin: 0;
+    display: flex;
+    align-items: center;
+}
+
+.auth-heading,
+.auth-form {
+    max-width: 520px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.auth-form>label+label {
+    margin-top: 18px;
+}
+
 .main-nav a {
     text-decoration: none;
     color: var(--muted);
