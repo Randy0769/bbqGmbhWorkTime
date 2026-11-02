@@ -19,12 +19,14 @@ BERLIN = ZoneInfo("Europe/Berlin")
 Region = Literal["BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH"]
 
 
+# Zeitpunkte eindeutig nach UTC normalisieren und Genauigkeit sowie Datumsbereich pruefen.
 def to_utc(value: datetime) -> datetime:
     """Naive Eingaben sind Berliner Ortszeit; DST-Lücken/-Mehrdeutigkeit ablehnen."""
     if value.tzinfo is not None:
         result = value.astimezone(UTC)
     else:
         candidates = set()
+        # Nur Ortszeiten akzeptieren, die sich eindeutig nach UTC und zurück umwandeln lassen.
         for fold in (0, 1):
             candidate = value.replace(tzinfo=BERLIN, fold=fold).astimezone(UTC)
             if candidate.astimezone(BERLIN).replace(tzinfo=None) == value:
@@ -40,6 +42,7 @@ def to_utc(value: datetime) -> datetime:
 
 
 class StrictModel(BaseModel):
+    # Unbekannte Eingabefelder ablehnen, statt Tippfehler stillschweigend zu ignorieren.
     model_config = ConfigDict(extra="forbid")
 
 
@@ -51,6 +54,7 @@ class Pause(StrictModel):
     _normalize = field_validator("started_at", "ended_at")(to_utc)
 
     @model_validator(mode="after")
+    # Nur Pausen mit positiver Dauer zulassen.
     def validate_interval(self):
         if self.ended_at <= self.started_at:
             raise ValueError("Pausenende muss nach dem Pausenbeginn liegen.")
@@ -64,6 +68,7 @@ class Thresholds(StrictModel):
     positive_red: int = Field(default=1200, ge=0, le=60000)
 
     @model_validator(mode="after")
+    # Die vier Ampelgrenzen in streng aufsteigender Reihenfolge um null verlangen.
     def validate_order(self):
         if not self.negative_red < self.negative_yellow < 0 < self.positive_yellow < self.positive_red:
             raise ValueError("Ampelgrenzen: Rot minus < Gelb minus < 0 < Gelb plus < Rot plus.")
@@ -78,17 +83,18 @@ class Workday(StrictModel):
     breaks: list[Pause] = Field(default_factory=list, max_length=100)
     weekly_hours: Literal[30, 35, 40] = 40
     holiday_region: Literal["BW"] = "BW"
-    opening_balance_minutes: int = Field(default=0, ge=-600000, le=600000)
     thresholds: Thresholds = Field(default_factory=Thresholds)
 
     _normalize = field_validator("started_at", "ended_at")(to_utc)
 
     @field_validator("previous_ended_at")
     @classmethod
+    # Ein vorhandenes vorheriges Arbeitsende nach denselben Zeitregeln normalisieren.
     def normalize_previous(cls, value):
         return to_utc(value) if value is not None else None
 
     @model_validator(mode="after")
+    # Tagesdauer, vorheriges Ende und innenliegende, getrennte Pausen validieren.
     def validate_workday(self):
         if not timedelta(0) < self.ended_at - self.started_at <= timedelta(hours=24):
             raise ValueError("Ein Arbeitstag muss länger als 0 und höchstens 24 tatsächliche Stunden sein.")
@@ -125,23 +131,27 @@ class Evaluation(StrictModel):
     earliest_next_start: str
     target_minutes: int | None
     daily_balance_minutes: int | None
-    projected_balance_minutes: int | None
     balance_color: Literal["green", "yellow", "red"] | None
     status: Literal["violation", "warning", "incomplete"]
     findings: list[Finding]
 
 
+# Eine Zeitspanne auf ganze Minuten abrunden.
 def minutes(start: datetime, end: datetime) -> int:
     return int((end - start).total_seconds()) // 60
 
 
+# Eine Berliner Tagesgrenze als UTC-Zeitpunkt fuer Intervallvergleiche bilden.
 def local_boundary(day: date, hour: int) -> datetime:
+    # Anrechnungsfenster in Ortszeit festlegen, Dauern danach auf der UTC-Zeitachse berechnen.
     return datetime.combine(day, time(hour), tzinfo=BERLIN).astimezone(UTC)
 
 
+# Arbeitszeit, Pausen, Ruhezeit und Tagessaldo mit rechtlichen Hinweisen auswerten.
 def evaluate(workday: Workday) -> Evaluation:
     findings: list[Finding] = []
 
+    # Ein einheitliches Pruefergebnis samt optionaler Rechtsgrundlage sammeln.
     def add(code, severity, message, basis=None):
         findings.append(Finding(code=code, severity=severity, message=message, legal_basis=basis))
 
@@ -166,6 +176,7 @@ def evaluate(workday: Workday) -> Evaluation:
     longest = max(longest, block)
     actual = sum(minutes(start, end) for start, end in segments)
     total_break = minutes(workday.started_at, workday.ended_at) - actual
+    # Diese Regelprüfung bewertet echte Pausen, nicht den automatischen Dashboard-Abzug.
     required = 45 if actual > 540 else 30 if actual > 360 else 0
 
     if actual > 600:
@@ -210,6 +221,7 @@ def evaluate(workday: Workday) -> Evaluation:
         day_end = local_boundary(day + timedelta(days=1), 0)
         window_start, window_end = local_boundary(day, 6), local_boundary(day, 22)
         for start, end in segments:
+            # Nur die Schnittmenge mit 06–22 Uhr gutschreiben; die übrige Arbeit bleibt prüfbar.
             credited += max(0, minutes(max(start, window_start), min(end, window_end)))
             on_day = max(0, minutes(max(start, day_start), min(end, day_end)))
             if on_day and (day.weekday() == 6 or (calendar is not None and day in calendar)):
@@ -238,11 +250,10 @@ def evaluate(workday: Workday) -> Evaluation:
         add("target_unknown", "unchecked", "Tagessaldo nicht berechnet: Feiertagslage oder Verteilung über Tagesgrenzen ist nicht eindeutig.")
 
     delta = credited - target if target is not None else None
-    projected = workday.opening_balance_minutes + delta if delta is not None else None
     color = None
-    if projected is not None:
+    if delta is not None:
         limits = workday.thresholds
-        color = "red" if projected <= limits.negative_red or projected >= limits.positive_red else "yellow" if projected <= limits.negative_yellow or projected >= limits.positive_yellow else "green"
+        color = "red" if delta <= limits.negative_red or delta >= limits.positive_red else "yellow" if delta <= limits.negative_yellow or delta >= limits.positive_yellow else "green"
 
     add("scope", "unchecked", "Prüfung nur des eingegebenen Arbeitstags im gesetzlichen Regelfall. Alle Arbeitsabschnitte und Tätigkeiten bei anderen Arbeitgebern einbeziehen. Langzeitausgleich, Sondergruppen, Tarifausnahmen und vollständige ArbZG-Konformität sind nicht geprüft.")
     status = "violation" if any(item.severity == "violation" for item in findings) else "warning" if any(item.severity == "warning" for item in findings) else "incomplete"
@@ -253,6 +264,6 @@ def evaluate(workday: Workday) -> Evaluation:
         longest_work_block_minutes=longest, rest_minutes=rest,
         earliest_next_start=(workday.ended_at + timedelta(hours=11)).astimezone(BERLIN).isoformat(),
         target_minutes=target, daily_balance_minutes=delta,
-        projected_balance_minutes=projected, balance_color=color,
+        balance_color=color,
         status=status, findings=findings,
     )

@@ -204,6 +204,7 @@ footer {
     }
 }
 
+/* Das HTML-hidden-Attribut muss auch gegen andere Layoutregeln Vorrang behalten. */
 [hidden] {
     display: none !important;
 }
@@ -446,6 +447,7 @@ nav a:hover {
     border-radius: 8px;
 }
 
+/* Breite Tabellen horizontal scrollen lassen, statt die Seite insgesamt zu verbreitern. */
 .table-scroll {
     overflow-x: auto;
 }

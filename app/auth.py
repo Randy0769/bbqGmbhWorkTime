@@ -7,7 +7,8 @@ from pathlib import Path
 
 from app.db import connect
 
-COOKIE_NAME = "timetracker_v9_session"
+# Versionsgetrennte Cookies verhindern, dass parallele Installationen Sitzungen teilen.
+COOKIE_NAME = "timetracker_v10_session"
 SESSION_SECONDS = 12 * 60 * 60
 
 
@@ -15,6 +16,7 @@ class LoginBlocked(ValueError):
     pass
 
 
+# Passwortlaenge und Uebereinstimmung mit der Wiederholung pruefen.
 def validate_password(password: str, confirmation: str) -> None:
     if not 6 <= len(password) <= 128:
         raise ValueError("Das Passwort muss 6 bis 128 Zeichen lang sein. Keine Vorgaben zur Zeichenwahl.")
@@ -22,12 +24,15 @@ def validate_password(password: str, confirmation: str) -> None:
         raise ValueError("Die neuen Passwörter stimmen nicht überein.")
 
 
+# Salt und scrypt-Hash in einem gemeinsam speicherbaren Format erzeugen.
 def hash_password(password: str) -> str:
+    # Ein zufälliges Salt erzeugt auch für gleiche Passwörter unterschiedliche Hashwerte.
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**15, r=8, p=3, dklen=64, maxmem=64 * 1024 * 1024)
     return f"scrypt${salt.hex()}${digest.hex()}"
 
 
+# Das eingegebene Passwort gegen den gespeicherten scrypt-Hash vergleichen.
 def verify_password(password: str, stored: str) -> bool:
     if len(password) > 128:
         return False
@@ -36,16 +41,20 @@ def verify_password(password: str, stored: str) -> bool:
         if algorithm != "scrypt":
             return False
         actual = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt), n=2**15, r=8, p=3, dklen=64, maxmem=64 * 1024 * 1024)
+        # Konstanter Zeitvergleich vermeidet einen Abbruch beim ersten abweichenden Byte.
         return secrets.compare_digest(actual, bytes.fromhex(expected))
     except (ValueError, TypeError):
         return False
 
 
+# Sitzungstoken fuer die Datenbanksuche in einen SHA-256-Hash umwandeln.
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+# Abgelaufene Sitzungen entfernen und eine neue mit eigenem CSRF-Token anlegen.
 def create_session(connection, authenticated: bool) -> str:
+    # Nur der Browser erhält das Sitzungstoken; die Datenbank speichert dessen Hashwert.
     token = secrets.token_urlsafe(32)
     now = int(time.time())
     connection.execute("DELETE FROM local_sessions WHERE expires_at <= ?", (now,))
@@ -56,6 +65,7 @@ def create_session(connection, authenticated: bool) -> str:
     return token
 
 
+# Eine noch gueltige Sitzung und den Namen des lokalen Profils laden.
 def auth_state(path: Path, token: str) -> tuple[dict | None, str | None]:
     with connect(path) as connection:
         account = connection.execute("SELECT username FROM local_auth WHERE id = 1").fetchone()
@@ -66,22 +76,26 @@ def auth_state(path: Path, token: str) -> tuple[dict | None, str | None]:
     return (dict(session) if session else None, account["username"] if account else None)
 
 
+# Eine kurzlebige, nicht angemeldete Sitzung fuer den Formularschutz erstellen.
 def anonymous_session(path: Path) -> str:
     with connect(path) as connection:
         return create_session(connection, False)
 
 
+# Die zum Browser-Token gehoerende Sitzung dauerhaft entfernen.
 def destroy_session(path: Path, token: str) -> None:
     with connect(path) as connection:
         connection.execute("DELETE FROM local_sessions WHERE token_hash = ?", (token_hash(token),))
 
 
+# Anmeldeversuche waehrend einer aktiven Sperrfrist ablehnen.
 def check_throttle(connection) -> None:
     row = connection.execute("SELECT * FROM local_auth_attempts WHERE id = 1").fetchone()
     if row["blocked_until"] > int(time.time()):
         raise LoginBlocked("Zu viele Fehlversuche. Bitte in einer Minute erneut versuchen.")
 
 
+# Fehlversuche zaehlen und nach dem fuenften Versuch eine Minute sperren.
 def failed_attempt(connection) -> None:
     connection.execute(
         "UPDATE local_auth_attempts SET failures = CASE WHEN failures >= 4 THEN 0 ELSE failures + 1 END, "
@@ -90,6 +104,7 @@ def failed_attempt(connection) -> None:
     )
 
 
+# Das einzige lokale Konto atomar einrichten und direkt eine Sitzung ausstellen.
 def setup_account(path: Path, username: str, password: str, confirmation: str) -> str:
     username = username.strip()
     if not 1 <= len(username) <= 64 or any(ord(char) < 32 for char in username):
@@ -105,6 +120,7 @@ def setup_account(path: Path, username: str, password: str, confirmation: str) -
         return create_session(connection, True)
 
 
+# Zugang pruefen, Fehlversuche speichern und bei Erfolg das Sitzungstoken wechseln.
 def login(path: Path, username: str, password: str, old_token: str) -> str:
     result = None
     with connect(path) as connection:
@@ -119,11 +135,13 @@ def login(path: Path, username: str, password: str, old_token: str) -> str:
             result = create_session(connection, True)
         else:
             failed_attempt(connection)
+    # Erst nach dem Commit ablehnen, damit der Fehlversuch trotz Ausnahme gespeichert bleibt.
     if result is None:
         raise ValueError("Benutzername oder Passwort ist falsch.")
     return result
 
 
+# Nach Passwortpruefung alle bisherigen Sitzungen durch eine neue ersetzen.
 def change_password(path: Path, current: str, password: str, confirmation: str) -> str:
     validate_password(password, confirmation)
     encoded = hash_password(password)
@@ -140,6 +158,7 @@ def change_password(path: Path, current: str, password: str, confirmation: str) 
             result = create_session(connection, True)
         else:
             failed_attempt(connection)
+    # Auch ein falsches aktuelles Passwort muss den Fehlversuch dauerhaft erhöhen.
     if result is None:
         raise ValueError("Das aktuelle Passwort ist falsch.")
     return result

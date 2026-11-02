@@ -1,10 +1,10 @@
-{% extends "base.html" %}
+{# setup schaltet zwischen erstmaliger Kontoeinrichtung und normaler Anmeldung um. #}{% extends "base.html" %}
 {% block content %}
 <section class="hero auth-heading"><p class="eyebrow">BBQ TIMETRACKER</p><h1>{{ 'Anmeldung einrichten' if setup else 'Willkommen zurück' }}</h1><p class="subtitle">{{ 'Schütze dein lokales Profil. Vorhandene Zeiteinträge bleiben erhalten.' if setup else 'Melde dich an, um deine Arbeitszeit zu verwalten.' }}</p></section>
 <form method="post" action="{{ '/setup' if setup else '/login' }}" class="card workday-form auth-form">
     <h2>{{ 'Zugang festlegen' if setup else 'Anmelden' }}</h2>
     {% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    {# Bereits die anonyme Sitzung schuetzt dieses Formular mit einem CSRF-Token. #}<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <label>Benutzername<input name="username" autocomplete="username" maxlength="64" required autofocus></label>
     <label>Passwort<input type="password" name="password" autocomplete="{{ 'new-password' if setup else 'current-password' }}" {% if setup %}minlength="6"{% endif %} maxlength="128" required></label>
     {% if setup %}

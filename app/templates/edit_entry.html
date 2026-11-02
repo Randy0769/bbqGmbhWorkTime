@@ -1,8 +1,8 @@
-{% extends "base.html" %}
+{# Dasselbe Formular dient zum Anlegen und Bearbeiten; entry_id bestimmt den Modus. #}{% extends "base.html" %}
 {% block content %}
-<section class="hero"><h1>Eintrag bearbeiten</h1></section>
+<section class="page-heading"><h1>{{ 'Eintrag hinzufügen' if entry_id is none else 'Eintrag bearbeiten' }}</h1></section>
 {% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
-<form method="post" action="/entries/{{ entry_id }}/edit" class="card workday-form">
+<form method="post" action="{{ '/entries/new' if entry_id is none else '/entries/' ~ entry_id ~ '/edit' }}" class="card workday-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <input type="hidden" name="revision" value="{{ values.revision }}">
     <h2>Check-in und Check-out</h2>
@@ -10,8 +10,12 @@
         {% for key, label in [('started_at', 'Check-in'), ('ended_at', 'Check-out')] %}
         <fieldset class="entry-datetime">
             <legend>{{ label }}</legend>
+            {% if entry_id is none %}
+            <label for="{{ key }}_date">Datum<input type="date" id="{{ key }}_date" name="{{ key }}_date" value="{{ values.get(key ~ '_date', '') }}" min="2000-01-01" max="2100-12-31" required></label>
+            {% else %}
             <p>Datum: <strong>{{ values[key ~ '_display_date'] }}</strong></p>
             <input type="hidden" name="{{ key }}_date" value="{{ values.get(key ~ '_date', '') }}">
+            {% endif %}
             <div class="entry-time" role="group" aria-label="{{ label }}: Uhrzeit im 24-Stunden-Format">
                 {% for part, title, count in [('hour', 'Stunde', 24), ('minute', 'Minute', 60)] %}
                 <label for="{{ key }}_{{ part }}">{{ title }}<select id="{{ key }}_{{ part }}" name="{{ key }}_{{ part }}" required aria-label="{{ label }}: {{ title }}">
@@ -19,10 +23,38 @@
                 </select></label>
                 {% endfor %}
             </div>
+            {# Ein expliziter Offset unterscheidet die doppelte Ortszeit beim Herbstwechsel. #}<label for="{{ key }}_offset">UTC-Offset (bei Zeitumstellung)<select id="{{ key }}_offset" name="{{ key }}_offset">
+                {% for offset, text in [('', 'Automatisch'), ('+02:00', 'UTC+02:00 · Sommerzeit'), ('+01:00', 'UTC+01:00 · Winterzeit')] %}
+                <option value="{{ offset }}" {% if values.get(key ~ '_offset', '') == offset %}selected{% endif %}>{{ text }}</option>
+                {% endfor %}
+            </select></label>
         </fieldset>
-        <input type="hidden" name="{{ key }}_offset" value="{{ values[key ~ '_offset'] }}">
         {% endfor %}
     </div>
-    <div class="actions"><button class="button" type="submit">Änderungen speichern</button><a href="/#entries-heading">Abbrechen</a>{% if errors %}<a href="/entries/{{ entry_id }}/edit">Formular neu öffnen</a>{% endif %}</div>
+    <details {% if values.get('pause_started_at_hour') or values.get('pause_started_at_minute') or values.get('pause_ended_at_hour') or values.get('pause_ended_at_minute') %}open{% endif %}>
+        <summary>Pause eintragen (optional)</summary>
+        <div class="field-grid">
+            {% for key, label in [('pause_started_at', 'Pausenbeginn'), ('pause_ended_at', 'Pausenende')] %}
+            <fieldset class="entry-datetime">
+                <legend>{{ label }}</legend>
+                <label for="{{ key }}_date">Datum<input type="date" id="{{ key }}_date" name="{{ key }}_date" value="{{ values.get(key ~ '_date', '') }}" min="2000-01-01" max="2100-12-31"></label>
+                <div class="entry-time" role="group" aria-label="{{ label }}: Uhrzeit im 24-Stunden-Format">
+                    {% for part, title, count in [('hour', 'Stunde', 24), ('minute', 'Minute', 60)] %}
+                    <label for="{{ key }}_{{ part }}">{{ title }}<select id="{{ key }}_{{ part }}" name="{{ key }}_{{ part }}" aria-label="{{ label }}: {{ title }}">
+                        <option value="">-</option>
+                        {% for number in range(count) %}{% set text = '%02d'|format(number) %}<option value="{{ text }}" {% if values.get(key ~ '_' ~ part) == text %}selected{% endif %}>{{ text }}</option>{% endfor %}
+                    </select></label>
+                    {% endfor %}
+                </div>
+                <label for="{{ key }}_offset">UTC-Offset (bei Zeitumstellung)<select id="{{ key }}_offset" name="{{ key }}_offset">
+                    {% for offset, text in [('', 'Automatisch'), ('+02:00', 'UTC+02:00 · Sommerzeit'), ('+01:00', 'UTC+01:00 · Winterzeit')] %}
+                    <option value="{{ offset }}" {% if values.get(key ~ '_offset', '') == offset %}selected{% endif %}>{{ text }}</option>
+                    {% endfor %}
+                </select></label>
+            </fieldset>
+            {% endfor %}
+        </div>
+    </details>
+    <div class="actions"><button class="button" type="submit">{{ 'Eintrag speichern' if entry_id is none else 'Änderungen speichern' }}</button><a href="/#entries-heading">Abbrechen</a>{% if errors %}<a href="{{ '/entries/new' if entry_id is none else '/entries/' ~ entry_id ~ '/edit' }}">Formular neu öffnen</a>{% endif %}</div>
 </form>
 {% endblock %}
