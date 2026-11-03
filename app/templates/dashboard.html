@@ -1,0 +1,131 @@
+{# Dashboard mit laufender Buchung, Warnungen, Periodensalden und gefiltertem Verlauf. #}{% extends "base.html" %}
+{% block content %}
+<section class="page-heading">
+    <div><h1>Meine Arbeitszeit<span>.</span></h1></div>
+</section>
+{% if errors %}<div class="error-message" role="alert"><ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+<section class="clock-panel card" aria-label="Ein- und Auschecken">
+    <div class="clock-copy">
+        {% if clock.active %}<span class="status-pill is-active"><span class="status-dot" aria-hidden="true"></span>Arbeitszeit läuft</span>{% endif %}
+        <h2{% if clock.active %} data-live-start="{{ clock.active.started_at }}" aria-live="off"{% endif %}>{{ clock.active.duration_minutes|duration if clock.active else 'Deine Zeit beginnt hier.' }}</h2>
+        {% if clock.active %}<p>Eingecheckt seit {{ clock.active.started_at|local_time }}</p>{% endif %}
+    </div>
+    {# CSRF bindet die Aktion an die Sitzung, revision an den angezeigten Buchungsstand. #}<form method="post" action="/clock">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="revision" value="{{ clock.revision }}">
+        <button class="button clock-button {{ 'checkout-button' if clock.active else '' }}" type="submit" name="action" value="{{ 'check_out' if clock.active else 'check_in' }}"><span aria-hidden="true">{{ '■' if clock.active else '↗' }}</span> {{ 'Jetzt auschecken' if clock.active else 'Jetzt einchecken' }}</button>
+    </form>
+</section>
+{# data-live-Attribute verbinden die serverseitigen Startwerte mit live-clock.js. #}<section class="stats-grid" aria-label="Zeitübersicht">
+    <article class="card stat-card"><div class="stat-label">Heute netto <span aria-hidden="true">◷</span></div><p class="stat-value"{% if clock.active %} data-live-total="today_credited_duration" data-clock-revision="{{ clock.revision }}"{% endif %}>{{ clock.today_credited_minutes|duration }}</p><p class="stat-caption">Betrieblich · 06–22 Uhr</p></article>
+    <article class="card stat-card"><div class="stat-label">Diesen Monat netto <span aria-hidden="true">▦</span></div><p class="stat-value"{% if clock.active %} data-live-total="month_credited_duration" data-clock-revision="{{ clock.revision }}"{% endif %}>{{ clock.month_credited_minutes|duration }}</p><p class="stat-caption">Betrieblich · 06–22 Uhr</p></article>
+    <article class="card stat-card"><div class="stat-label">Gespeicherte Einträge <span aria-hidden="true">≡</span></div><p class="stat-value">{{ clock.count }}</p><p class="stat-caption">{{ 'Davon ein Eintrag aktiv' if clock.active else 'Alle Einträge abgeschlossen' }}</p></article>
+    <article class="card stat-card"><div class="stat-label">Wochenmodell <span aria-hidden="true">◎</span></div><p class="stat-value">{{ preferences.weekly_hours }} <small>h / Woche</small></p><a class="stat-caption settings-link" href="/settings">Einstellungen anpassen ↗</a></article>
+</section>
+<section class="warnings-panel" aria-labelledby="warnings-heading" aria-live="polite" data-live-warnings data-warning-user="{{ username }}">
+    <div class="balance-heading"><h2 id="warnings-heading">Warnungen <span class="count-chip" data-warning-count>{{ warnings|length }}</span></h2><button type="button" class="secondary-button" data-restore-warnings hidden>Meldungen wieder anzeigen</button></div>
+    <ul class="warnings-list" data-warning-list>
+        {% for warning in warnings %}
+        <li class="warning-item warning-{{ warning.severity }}" data-warning-code="{{ warning.code }}" data-warning-date="{{ warning.date }}" data-warning-severity="{{ warning.severity }}">
+            <span class="warning-level">{{ 'Kritisch' if warning.severity == 'violation' else 'Warnung' if warning.severity == 'warning' else 'Hinweis' }}</span>
+            <p class="warning-message">{{ warning.message }}</p>
+        </li>
+        {% endfor %}
+    </ul>
+    <p class="warnings-clear" data-warning-empty{% if warnings %} hidden{% endif %}>Keine aktuellen Warnungen.</p>
+</section>
+<section aria-labelledby="balance-heading">
+    <div class="balance-heading"><div><p class="eyebrow">DEINE GLEITZEIT</p><h2 id="balance-heading">Plus und Minus im Überblick</h2></div><a class="settings-link" href="/settings">Ampelgrenzen anpassen ↗</a></div>
+    <div class="stats-grid balance-grid">
+        {% for balance in clock.balances %}
+        <article class="card stat-card balance-card balance-{{ balance.color }}">
+            <div class="stat-label">{{ balance.title }}</div>
+            <p class="stat-value">{{ balance.balance_minutes|duration(true) }}</p>
+        </article>
+        {% endfor %}
+    </div>
+</section>
+<section class="card watchdog watchdog-{{ watchdog.color }}" aria-labelledby="watchdog-heading" data-live-watchdog>
+    <div class="section-heading">
+        <div><h2 id="watchdog-heading">Dein Zeitwächter</h2></div>
+    </div>
+    <div class="watchdog-body">
+        <p class="watchdog-duration"><span data-watchdog-time>{{ clock.today_minutes|duration }}</span> <span>heute netto gesamt</span></p>
+        <div class="watchdog-track" role="meter" aria-label="Heute berechnete Nettozeit bis zur 10-Stunden-Grenze" aria-valuemin="0" aria-valuemax="600" aria-valuenow="{{ [clock.today_minutes, 600]|min }}" aria-valuetext="{{ clock.today_minutes|duration }} netto berechnet. {{ watchdog.label }}. Tagessoll {{ watchdog.target_minutes|duration }}. Rot über 10 Stunden." style="--target-position: {{ watchdog.target_percent }}%;">
+            <span class="watchdog-fill" style="width: {{ watchdog.fill_percent }}%;"></span>
+            <span class="watchdog-marker" aria-hidden="true"></span>
+        </div>
+        <div class="watchdog-scale" style="--target-position: {{ watchdog.target_percent }}%;"><span>0 h</span><span class="watchdog-target">Tagessoll {{ watchdog.target_minutes|duration }}</span><span>10 h</span></div>
+        <div class="ampel-legend"><span class="ampel-green">● Bis zum Tagessoll</span><span class="ampel-yellow">● Über dem Tagessoll</span><span class="ampel-red">● Über 10 Stunden</span></div>
+    </div>
+</section>
+<section class="card history-panel" aria-labelledby="entries-heading">
+    {% if request.query_params.get('added') == '1' %}<p class="success-message" role="status">Eintrag hinzugefügt.</p>{% endif %}
+    {% if request.query_params.get('updated') == '1' %}<p class="success-message" role="status">Eintrag gespeichert. Pausen und Salden wurden aktualisiert.</p>{% endif %}
+    {% if request.query_params.get('deleted') == '1' %}<p class="success-message" role="status">Eintrag gelöscht. Pausen und Salden wurden aktualisiert.</p>{% endif %}
+    <div class="section-heading"><div><p class="eyebrow">DEIN VERLAUF</p><h2 id="entries-heading">Bisherige Einträge <span class="count-chip">{{ clock.filtered_count }}</span></h2></div><div class="history-actions"><a class="button" href="/entries/new"><span aria-hidden="true">+</span> Eintrag hinzufügen</a><a class="secondary-button" href="/?page={{ clock.page }}{{ clock.filter_query }}#entries-heading">Ansicht aktualisieren ↻</a></div></div>
+    <form class="history-filters" method="get" action="/#entries-heading" aria-label="Einträge nach Jahr und Monat auswählen">
+        <label>Jahr<select name="year"><option value="0">Alle Jahre</option>{% for year in clock.years %}<option value="{{ year }}" {% if clock.selected_year == year %}selected{% endif %}>{{ year }}</option>{% endfor %}</select></label>
+        <label>Monat<select name="month"><option value="0">Alle Monate</option>{% for name in months %}<option value="{{ loop.index }}" {% if clock.selected_month == loop.index %}selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+        <button class="button" type="submit">Einträge anzeigen</button>
+        {% if clock.selected_year or clock.selected_month %}<a href="/#entries-heading">Alle Einträge</a>{% endif %}
+    </form>
+    {% if clock.entries %}
+    {% set summaries = namespace(shown=[]) %}
+    {% for period, entries in clock.entries|groupby('period')|reverse %}
+    <details class="history-month">
+        <summary><span>{{ months[period[5:7]|int - 1] }} {{ period[:4] }}</span><span class="count-chip">{{ entries|length }} auf dieser Seite</span></summary>
+    {% for entry_date, day_entries in entries|groupby('date')|reverse %}
+    <div class="history-day-group">
+    <details class="history-day">
+        <summary>
+            <span class="day-date-badge" aria-hidden="true">{{ entry_date[8:10] }}<small>{{ entry_date[5:7] }} / {{ entry_date[:4] }}</small></span>
+            <span class="day-heading"><strong>{{ entry_date|weekday }}</strong><time datetime="{{ entry_date }}">{{ entry_date|local_date }}</time></span>
+            {% for day in clock.day_summaries if day.date == entry_date %}<span class="day-heading-net"><small>Nettozeit</small><strong>{{ day.net_minutes|duration }}</strong></span>{% endfor %}
+            <span class="day-entry-count">{{ day_entries|length }} {{ 'Eintrag' if day_entries|length == 1 else 'Einträge' }} <small>auf dieser Seite</small></span>
+            <span class="day-chevron" aria-hidden="true">›</span>
+        </summary>
+    <div class="table-scroll"><table>
+        <caption class="sr-only">{{ entry_date|local_date }}: gespeicherte Check-ins, neueste zuerst. Zeitangaben in Europe/Berlin.</caption>
+        <thead><tr><th scope="col">Datum</th><th scope="col">Check-in</th><th scope="col">Check-out</th><th scope="col">Dauer ohne Abzug</th><th scope="col">Status</th><th scope="col">Aktion</th></tr></thead>
+        <tbody>{% for entry in day_entries %}<tr>
+            <td class="entry-date"><time datetime="{{ entry.started_at }}">{{ entry.started_at|local_date }}</time></td>
+            <td>{{ entry.started_at|local_time }}</td>
+            <td>{% if entry.ended_at %}{{ entry.ended_at|local_time }}{% if entry.ended_at|local_date != entry.started_at|local_date %}<span class="cell-detail">{{ entry.ended_at|local_date }}</span>{% endif %}{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="entry-duration"{% if not entry.ended_at %} data-live-start="{{ entry.started_at }}"{% endif %}>{{ entry.duration_minutes|duration }}</td>
+            <td><span class="status-pill {{ 'is-active' if not entry.ended_at else 'is-complete' }}"><span class="status-dot" aria-hidden="true"></span>{{ 'Läuft' if not entry.ended_at else 'Abgeschlossen' }}</span></td>
+            <td>{% if entry.ended_at %}<div class="entry-actions"><a class="secondary-button" href="/entries/{{ entry.id }}/edit" aria-label="Eintrag vom {{ entry.started_at|local_datetime }} bearbeiten">Bearbeiten</a>
+                <form method="post" action="/entries/{{ entry.id }}/delete">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="revision" value="{{ clock.revision }}">
+                    <button type="submit" class="secondary-button danger-button" aria-label="Eintrag vom {{ entry.started_at|local_datetime }} löschen">Löschen</button>
+                </form></div>{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>{% endfor %}</tbody>
+    </table></div>
+    </details>
+        {% set entry_ids = day_entries|map(attribute='id')|list %}
+        {% for day in clock.day_summaries %}
+        {% set matches = namespace(found=false) %}{% for id in entry_ids %}{% if id in day.ids %}{% set matches.found = true %}{% endif %}{% endfor %}
+        {% if matches.found and day.date != entry_date and day.date not in summaries.shown and not (clock.entries|selectattr('date', 'equalto', day.date)|list) %}
+        <div class="day-summary">
+            <p class="day-net-total"><span>Nettozeit · {{ day.date|local_date }}</span><strong>{{ day.net_minutes|duration }}</strong></p>
+        </div>
+        {% set summaries.shown = summaries.shown + [day.date] %}
+        {% endif %}{% endfor %}
+    </div>
+    {% endfor %}
+    </details>
+    {% endfor %}
+    <div class="table-footer"><p>{{ clock.first }}–{{ clock.last }} von {{ clock.filtered_count }} Einträgen{% if clock.selected_year or clock.selected_month %} · {{ clock.count }} insgesamt{% endif %}</p>
+        <nav class="pagination" aria-label="Eintragsseiten">
+            {% if clock.page > 1 %}<a class="secondary-button" href="/?page={{ clock.page - 1 }}{{ clock.filter_query }}#entries-heading">← Zurück</a>{% endif %}
+            <span>Seite {{ clock.page }} / {{ clock.pages }}</span>
+            {% if clock.page < clock.pages %}<a class="secondary-button" href="/?page={{ clock.page + 1 }}{{ clock.filter_query }}#entries-heading">Weiter →</a>{% endif %}
+        </nav>
+    </div>
+    {% else %}
+    <div class="empty-state"><span class="empty-icon" aria-hidden="true">◷</span>{% if clock.selected_year or clock.selected_month %}<h3>Keine Einträge für diese Auswahl</h3><p>Wähle ein anderes Jahr oder einen anderen Monat.</p>{% else %}<h3>Noch keine Einträge</h3><p>Checke dich oben ein. Dein erster Eintrag erscheint dann hier.</p>{% endif %}</div>
+    {% endif %}
+</section>
+<script src="{{ url_for('static', path='/js/live-clock.js') }}" defer></script>
+{% endblock %}
