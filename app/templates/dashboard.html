@@ -71,6 +71,9 @@
         {% if clock.selected_year or clock.selected_month %}<a href="/#entries-heading">Alle Einträge</a>{% endif %}
     </form>
     {% if clock.entries %}
+    {% if clock.day_summaries|selectattr('includes_future')|list %}
+    <p class="stat-caption">Die Nettozeit je Tag enthält auch vorgemerkte Check-outs und rechnerische Pausenabzüge. Heute, Monat und Zeitkonto rechnen weiterhin nur bereits vergangene Zeit an.</p>
+    {% endif %}
     {% set summaries = namespace(shown=[]) %}
     {% for period, entries in clock.entries|groupby('period')|reverse %}
     <details class="history-month">
@@ -81,7 +84,7 @@
         <summary>
             <span class="day-date-badge" aria-hidden="true">{{ entry_date[8:10] }}<small>{{ entry_date[5:7] }} / {{ entry_date[:4] }}</small></span>
             <span class="day-heading"><strong>{{ entry_date|weekday }}</strong><time datetime="{{ entry_date }}">{{ entry_date|local_date }}</time></span>
-            {% for day in clock.day_summaries if day.date == entry_date %}<span class="day-heading-net"><small>Nettozeit</small><strong>{{ day.net_minutes|duration }}</strong></span>{% endfor %}
+            {% for day in clock.day_summaries if day.date == entry_date %}<span class="day-heading-net"><small>Nettozeit{% if day.includes_future %} · vorgemerkt{% endif %}</small><strong>{{ day.net_minutes|duration }}</strong></span>{% endfor %}
             <span class="day-entry-count">{{ day_entries|length }} {{ 'Eintrag' if day_entries|length == 1 else 'Einträge' }} <small>auf dieser Seite</small></span>
             <span class="day-chevron" aria-hidden="true">›</span>
         </summary>
@@ -108,7 +111,7 @@
         {% set matches = namespace(found=false) %}{% for id in entry_ids %}{% if id in day.ids %}{% set matches.found = true %}{% endif %}{% endfor %}
         {% if matches.found and day.date != entry_date and day.date not in summaries.shown and not (clock.entries|selectattr('date', 'equalto', day.date)|list) %}
         <div class="day-summary">
-            <p class="day-net-total"><span>Nettozeit · {{ day.date|local_date }}</span><strong>{{ day.net_minutes|duration }}</strong></p>
+            <p class="day-net-total"><span>Nettozeit · {{ day.date|local_date }}{% if day.includes_future %} · vorgemerkt{% endif %}</span><strong>{{ day.net_minutes|duration }}</strong></p>
         </div>
         {% set summaries.shown = summaries.shown + [day.date] %}
         {% endif %}{% endfor %}
