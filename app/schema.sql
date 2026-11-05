@@ -1,6 +1,6 @@
--- Version 1. Zeitpunkte: UTC im Format YYYY-MM-DDTHH:MM:SSZ.
+-- Vollstaendiges Schema fuer Version11. Zeitpunkte: UTC im Format YYYY-MM-DDTHH:MM:SSZ.
 -- Dauern und Salden: ganze Minuten. Keine Passwörter im Klartext.
--- Basisschema vor den lokalen Erweiterungen; app.db setzt die Versionsnummer.
+-- app.db setzt die Schemaversion; separate Migrationen sind nicht erforderlich.
 
 CREATE TABLE users (
     id INTEGER PRIMARY KEY,
@@ -109,3 +109,52 @@ CREATE TABLE audit_events (
 );
 
 CREATE INDEX audit_events_entity ON audit_events(entity_type, entity_id, created_at);
+
+-- Gemeinsames lokales Profil mit Wochenmodell, Ampelgrenzen und Schreibrevision.
+CREATE TABLE local_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    weekly_hours INTEGER NOT NULL DEFAULT 40 CHECK (weekly_hours IN (30, 35, 40)),
+    holiday_region TEXT DEFAULT 'BW' CHECK (holiday_region IS NULL OR holiday_region IN (
+        'BW','BY','BE','BB','HB','HH','HE','MV','NI','NW','RP','SL','SN','ST','SH','TH'
+    )),
+    negative_red INTEGER NOT NULL DEFAULT -1200,
+    negative_yellow INTEGER NOT NULL DEFAULT -600,
+    positive_yellow INTEGER NOT NULL DEFAULT 600,
+    positive_red INTEGER NOT NULL DEFAULT 1200,
+    clock_revision INTEGER NOT NULL DEFAULT 0,
+    daily_negative_red INTEGER NOT NULL DEFAULT -120 CHECK (daily_negative_red BETWEEN -60000 AND -30 AND daily_negative_red % 30 = 0),
+    daily_negative_yellow INTEGER NOT NULL DEFAULT -60 CHECK (daily_negative_yellow BETWEEN -59970 AND -30 AND daily_negative_yellow % 30 = 0),
+    daily_positive_yellow INTEGER NOT NULL DEFAULT 60 CHECK (daily_positive_yellow BETWEEN 30 AND 59970 AND daily_positive_yellow % 30 = 0),
+    daily_positive_red INTEGER NOT NULL DEFAULT 120 CHECK (daily_positive_red BETWEEN 30 AND 60000 AND daily_positive_red % 30 = 0),
+    CHECK (negative_red < negative_yellow AND negative_yellow < 0
+        AND positive_yellow > 0 AND positive_yellow < positive_red)
+);
+INSERT INTO local_settings (id) VALUES (1);
+
+-- Offene Buchungen haben kein Ende; Einstellungen bleiben als historischer JSON-Stand erhalten.
+CREATE TABLE local_clock_entries (
+    id INTEGER PRIMARY KEY,
+    started_at TEXT NOT NULL,
+    ended_at TEXT CHECK (ended_at IS NULL OR ended_at > started_at),
+    settings_json TEXT NOT NULL
+);
+CREATE UNIQUE INDEX one_local_running_entry ON local_clock_entries ((1)) WHERE ended_at IS NULL;
+
+-- Das einzige lokale Konto speichert einen Passwort-Hash statt eines Klartextpassworts.
+CREATE TABLE local_auth (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    username TEXT NOT NULL COLLATE NOCASE,
+    password_hash TEXT NOT NULL
+);
+CREATE TABLE local_sessions (
+    token_hash TEXT PRIMARY KEY,
+    csrf_token TEXT NOT NULL,
+    authenticated INTEGER NOT NULL CHECK (authenticated IN (0, 1)),
+    expires_at INTEGER NOT NULL
+);
+CREATE TABLE local_auth_attempts (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    failures INTEGER NOT NULL DEFAULT 0,
+    blocked_until INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO local_auth_attempts(id) VALUES (1);

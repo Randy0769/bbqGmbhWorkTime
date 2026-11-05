@@ -10,12 +10,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 @dataclass(frozen=True)
 class Settings:
+    """Unveränderliche Anwendungskonfiguration mit Datenbankpfad und Anzeigetitel."""
+
     database_path: Path
     title: str = "BBQ TimeTracker"
 
 
-# Den persistenten Datenbankpfad passend zu Umgebung und Startart bestimmen.
 def get_settings() -> Settings:
+    """Ermittelt die Konfiguration mit absolutem Pfad zur lokalen Datenbank.
+
+    TIMETRACKER_DB_PATH hat Vorrang. Ohne Vorgabe nutzt die EXE den
+    Benutzerdatenordner und der Quellstart den Datenordner der Anwendung.
+    """
     frozen = getattr(sys, "frozen", False)
     # Ein expliziter Datenbankpfad hat Vorrang vor Quell- und EXE-Standardpfaden.
     override = os.environ.get("TIMETRACKER_DB_PATH")
@@ -24,7 +30,7 @@ def get_settings() -> Settings:
     elif frozen:
         # One-file-Pakete werden temporär entpackt: Nutzdaten dort niemals ablegen.
         local_data = os.environ.get("LOCALAPPDATA")
-        data_dir = (Path(local_data) if local_data else Path.home() / "AppData" / "Local") / "BBQ TimeTracker" / "Version10"
+        data_dir = (Path(local_data) if local_data else Path.home() / "AppData" / "Local") / "BBQ TimeTracker" / "Version11"
         path = data_dir / "timetracker.sqlite3"
     else:
         path = BASE_DIR / "data" / "timetracker.sqlite3"

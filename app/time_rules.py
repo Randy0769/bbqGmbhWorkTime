@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 UTC = timezone.utc
 BERLIN = ZoneInfo("Europe/Berlin")
+MINIMUM_REST = timedelta(hours=11)
 Region = Literal["BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH"]
 
 
@@ -42,11 +43,19 @@ def to_utc(value: datetime) -> datetime:
 
 
 class StrictModel(BaseModel):
+    """Gemeinsames Eingabemodell, das unbekannte Felder bei der Validierung ablehnt."""
+
     # Unbekannte Eingabefelder ablehnen, statt Tippfehler stillschweigend zu ignorieren.
     model_config = ConfigDict(extra="forbid")
 
 
 class Pause(StrictModel):
+    """Zeitlich begrenzte Unterbrechung mit UTC-Zeitpunkten und Angabe zur Vorausplanung.
+
+    Die Vorausplanung und eine Mindestdauer von 15 Minuten bestimmen in der
+    separaten Regelprüfung, ob die Unterbrechung als Ruhepause angerechnet wird.
+    """
+
     started_at: datetime
     ended_at: datetime
     planned: bool = False
@@ -54,28 +63,37 @@ class Pause(StrictModel):
     _normalize = field_validator("started_at", "ended_at")(to_utc)
 
     @model_validator(mode="after")
-    # Nur Pausen mit positiver Dauer zulassen.
     def validate_interval(self):
+        """Verlangt ein Pausenende nach dem Beginn und liefert das validierte Modell zurück."""
         if self.ended_at <= self.started_at:
             raise ValueError("Pausenende muss nach dem Pausenbeginn liegen.")
         return self
 
 
 class Thresholds(StrictModel):
+    """Vier geordnete Minutengrenzen für gelbe und rote positive beziehungsweise negative Salden."""
+
     negative_red: int = Field(default=-1200, ge=-60000, le=0)
     negative_yellow: int = Field(default=-600, ge=-60000, le=0)
     positive_yellow: int = Field(default=600, ge=0, le=60000)
     positive_red: int = Field(default=1200, ge=0, le=60000)
 
     @model_validator(mode="after")
-    # Die vier Ampelgrenzen in streng aufsteigender Reihenfolge um null verlangen.
     def validate_order(self):
+        """Prüft die streng aufsteigende Anordnung der Ampelgrenzen beiderseits von null."""
         if not self.negative_red < self.negative_yellow < 0 < self.positive_yellow < self.positive_red:
             raise ValueError("Ampelgrenzen: Rot minus < Gelb minus < 0 < Gelb plus < Rot plus.")
         return self
 
 
 class Workday(StrictModel):
+    """Validierte Eingaben für die Prüfung eines vollständigen Arbeitstags.
+
+    Enthält Beginn, Ende oder Prüfzeitpunkt, Pausen, Wochenmodell und Ampelgrenzen.
+    Ein vorheriges Arbeitsende ermöglicht die Ruhezeitprüfung; Zeitpunkte werden
+    nach UTC normalisiert und die tatsächliche Dauer auf höchstens 24 Stunden begrenzt.
+    """
+
     started_at: datetime
     ended_at: datetime = Field(description="Arbeitsende oder Prüfzeitpunkt bei laufender Arbeit.")
     completed: bool = True
@@ -89,13 +107,17 @@ class Workday(StrictModel):
 
     @field_validator("previous_ended_at")
     @classmethod
-    # Ein vorhandenes vorheriges Arbeitsende nach denselben Zeitregeln normalisieren.
     def normalize_previous(cls, value):
+        """Normalisiert ein vorhandenes vorheriges Arbeitsende nach UTC; None bleibt erhalten."""
         return to_utc(value) if value is not None else None
 
     @model_validator(mode="after")
-    # Tagesdauer, vorheriges Ende und innenliegende, getrennte Pausen validieren.
     def validate_workday(self):
+        """Prüft Tagesdauer und Pausenlage und sortiert die Pausen chronologisch.
+
+        Ungültige Dauer, ein zu spätes vorheriges Arbeitsende oder überlappende,
+        angrenzende beziehungsweise nicht innenliegende Pausen führen zu ValueError.
+        """
         if not timedelta(0) < self.ended_at - self.started_at <= timedelta(hours=24):
             raise ValueError("Ein Arbeitstag muss länger als 0 und höchstens 24 tatsächliche Stunden sein.")
         if self.previous_ended_at is not None and self.previous_ended_at > self.started_at:
@@ -113,6 +135,8 @@ class Workday(StrictModel):
 
 
 class Finding(StrictModel):
+    """Einzelner Prüfbefund mit Kennung, Schweregrad, Meldung und optionaler Rechtsgrundlage."""
+
     code: str
     severity: Literal["violation", "warning", "info", "unchecked"]
     message: str
@@ -120,6 +144,12 @@ class Finding(StrictModel):
 
 
 class Evaluation(StrictModel):
+    """Ergebnis der Arbeitstagsprüfung mit Dauern, Saldo, Status und einzelnen Befunden.
+
+    Nicht berechenbare optionale Werte bleiben None. Die Befunde benennen auch
+    Prüfgrenzen; das Ergebnis bestätigt keine vollständige rechtliche Konformität.
+    """
+
     actual_minutes: int
     credited_minutes: int
     outside_window_minutes: int
@@ -136,23 +166,28 @@ class Evaluation(StrictModel):
     findings: list[Finding]
 
 
-# Eine Zeitspanne auf ganze Minuten abrunden.
 def minutes(start: datetime, end: datetime) -> int:
+    """Liefert die Differenz der Zeitpunkte, auf ganze Minuten abgerundet."""
     return int((end - start).total_seconds()) // 60
 
 
-# Eine Berliner Tagesgrenze als UTC-Zeitpunkt fuer Intervallvergleiche bilden.
 def local_boundary(day: date, hour: int) -> datetime:
+    """Bildet für Datum und Stunde in Berlin den zugehörigen UTC-Zeitpunkt."""
     # Anrechnungsfenster in Ortszeit festlegen, Dauern danach auf der UTC-Zeitachse berechnen.
     return datetime.combine(day, time(hour), tzinfo=BERLIN).astimezone(UTC)
 
 
-# Arbeitszeit, Pausen, Ruhezeit und Tagessaldo mit rechtlichen Hinweisen auswerten.
 def evaluate(workday: Workday) -> Evaluation:
+    """Wertet einen validierten Arbeitstag samt Pausen, Ruhezeit und Tagessaldo aus.
+
+    Liefert berechnete Minutenwerte und Befunde für den gesetzlichen Regelfall.
+    Die betriebliche Anrechnung wird getrennt bewertet; eine vollständige
+    rechtliche Konformitätsprüfung oder automatische Pausenbuchung erfolgt nicht.
+    """
     findings: list[Finding] = []
 
-    # Ein einheitliches Pruefergebnis samt optionaler Rechtsgrundlage sammeln.
     def add(code, severity, message, basis=None):
+        """Ergänzt einen strukturierten Befund mit optionaler gesetzlicher Grundlage."""
         findings.append(Finding(code=code, severity=severity, message=message, legal_basis=basis))
 
     # Tatsächliche Unterbrechungen abziehen, aber nur vorher festgelegte Pausen
@@ -206,7 +241,7 @@ def evaluate(workday: Workday) -> Evaluation:
         add("rest_unknown", "unchecked", "Ruhezeit vor Arbeitsbeginn nicht prüfbar: vorheriges Arbeitsende fehlt.", "§ 5 ArbZG")
     else:
         rest = minutes(workday.previous_ended_at, workday.started_at)
-        if rest < 660:
+        if workday.started_at - workday.previous_ended_at < MINIMUM_REST:
             add("rest_short", "violation", f"Ruhezeit nur {rest} statt mindestens 660 Minuten (11 Stunden). Verletzung beim Vorgesetzten melden; mögliche branchenspezifische Ausnahme prüfen.", "§ 5 ArbZG")
 
     start_day = workday.started_at.astimezone(BERLIN).date()
@@ -262,7 +297,7 @@ def evaluate(workday: Workday) -> Evaluation:
         outside_window_minutes=actual - credited, break_minutes=total_break,
         qualifying_break_minutes=qualifying, required_break_minutes=required,
         longest_work_block_minutes=longest, rest_minutes=rest,
-        earliest_next_start=(workday.ended_at + timedelta(hours=11)).astimezone(BERLIN).isoformat(),
+        earliest_next_start=(workday.ended_at + MINIMUM_REST).astimezone(BERLIN).isoformat(),
         target_minutes=target, daily_balance_minutes=delta,
         balance_color=color,
         status=status, findings=findings,
