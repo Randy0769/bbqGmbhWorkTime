@@ -196,9 +196,7 @@ footer {
         padding-top: 44px;
     }
 
-    main,
-    .site-header,
-    footer {
+    main, .site-header, footer {
         padding-left: 22px;
         padding-right: 22px;
     }
@@ -236,8 +234,7 @@ label {
     font-size: 14px;
 }
 
-input,
-select {
+input, select {
     width: 100%;
     min-width: 0;
     padding: 11px 12px;
@@ -248,10 +245,7 @@ select {
     font: inherit;
 }
 
-input:focus-visible,
-select:focus-visible,
-button:focus-visible,
-summary:focus-visible {
+input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-visible {
     outline: 2px solid #65d6ca;
     outline-offset: 3px;
 }
@@ -365,14 +359,12 @@ summary {
     border-left-color: #efc76b;
 }
 
-.badge.violation,
-.badge.red {
+.badge.violation, .badge.red {
     background: #48272c;
     color: #ffb1b1;
 }
 
-.badge.warning,
-.badge.yellow {
+.badge.warning, .badge.yellow {
     background: #44391f;
     color: #f6d68b;
 }
@@ -382,8 +374,7 @@ summary {
     color: #8ee0b8;
 }
 
-.badge.incomplete,
-.badge.unchecked {
+.badge.incomplete, .badge.unchecked {
     background: #283246;
     color: #bccbe3;
 }
@@ -396,9 +387,7 @@ summary {
 }
 
 @media (max-width: 760px) {
-
-    .field-grid,
-    .break-row {
+    .field-grid, .break-row {
         grid-template-columns: 1fr;
     }
 
@@ -422,8 +411,7 @@ nav a:hover {
     text-decoration: underline;
 }
 
-.clock-panel,
-.history-panel {
+.clock-panel, .history-panel {
     margin-bottom: 24px;
 }
 
@@ -458,8 +446,7 @@ table {
     text-align: left;
 }
 
-th,
-td {
+th, td {
     padding: 12px;
     border-bottom: 1px solid #303c49;
     white-space: nowrap;

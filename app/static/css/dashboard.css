@@ -25,9 +25,7 @@ a {
     text-underline-offset: 4px;
 }
 
-button,
-input,
-select {
+button, input, select {
     font: inherit;
 }
 
@@ -89,8 +87,7 @@ button {
     align-items: center;
 }
 
-.auth-heading,
-.auth-form {
+.auth-heading, .auth-form {
     max-width: 520px;
     margin-left: auto;
     margin-right: auto;
@@ -353,8 +350,7 @@ h1 span {
     --balance-color: #ff939a;
 }
 
-.balance-card .stat-label>.balance-status,
-.balance-card .stat-value {
+.balance-card .stat-label>.balance-status, .balance-card .stat-value {
     color: var(--balance-color);
 }
 
@@ -837,8 +833,7 @@ tbody tr:hover {
     background: #182536;
 }
 
-.entry-date,
-.entry-duration {
+.entry-date, .entry-duration {
     color: #e9eef5;
     font-weight: 550;
 }
@@ -920,8 +915,7 @@ tbody tr:hover {
     border-color: #345b50;
 }
 
-.day-net dt,
-.day-net dd {
+.day-net dt, .day-net dd {
     color: var(--accent);
 }
 
@@ -1114,8 +1108,7 @@ label {
     color: #bdcadb;
 }
 
-input,
-select {
+input, select {
     width: 100%;
     min-width: 0;
     padding: 12px 14px;
@@ -1147,8 +1140,7 @@ select {
     min-width: 0;
 }
 
-.success-message,
-.error-message {
+.success-message, .error-message {
     padding: 16px 22px;
     border-radius: 10px;
     margin-bottom: 24px;
@@ -1461,8 +1453,7 @@ input.threshold-slider {
         padding: 22px;
     }
 
-    th,
-    td {
+    th, td {
         padding-left: 20px;
         padding-right: 20px;
     }
@@ -1475,8 +1466,7 @@ input.threshold-slider {
         font-size: 22px;
     }
 
-    .field-grid,
-    .slider-grid {
+    .field-grid, .slider-grid {
         grid-template-columns: 1fr;
     }
 
