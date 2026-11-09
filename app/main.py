@@ -20,8 +20,11 @@ from app.time_rules import BERLIN, Evaluation, Workday, evaluate
 from app.local_tracker import Preferences, clock_action, clock_state, daily_watchdog, dashboard_warnings, load_preferences, save_preferences, load_edit_entry, update_entry, delete_entry, parse_entry_datetime, close_overdue_entries, create_entry
 
 
-# Minutenwerte als Stunden und Minuten mit optionalem Vorzeichen darstellen.
 def format_duration(value: int | None, signed: bool = False) -> str:
+    """Formatiert Minuten als Stunden und Minuten, optional mit positivem Vorzeichen.
+
+    Bei None wird statt einer Dauer der Text „Nicht berechenbar“ zurückgegeben.
+    """
     if value is None:
         return "Nicht berechenbar"
     sign = "−" if value < 0 else "+" if signed and value > 0 else ""
@@ -29,19 +32,26 @@ def format_duration(value: int | None, signed: bool = False) -> str:
     return f"{sign}{hours} h {minutes:02d} min"
 
 
-# Eine konfigurierte Anwendung mit Lebenszyklus, Formularseiten und API-Routen erzeugen.
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Erstellt die FastAPI-Anwendung mit Anmeldung, Formularseiten und Regelprüfung.
+
+    Ohne übergebene Einstellungen wird die Umgebungskonfiguration verwendet.
+    Die Datenbankinitialisierung erfolgt erst beim Start des Anwendungslebenszyklus.
+    """
     settings = settings or get_settings()
 
     @asynccontextmanager
-    # Datenbank vorbereiten und den Hintergrundmonitor geordnet starten und beenden.
     async def lifespan(application: FastAPI):
+        """Initialisiert die Datenbank und verwaltet den Hintergrundmonitor bis zum Herunterfahren."""
         init_db(settings.database_path)
         close_overdue_entries(settings.database_path)
         stopped = asyncio.Event()
 
-        # Offene Buchungen regelmaessig auf die maximale Dauer von 24 Stunden pruefen.
         async def enforce_work_limit():
+            """Prüft alle zehn Sekunden fällige Abschlüsse bis zum gesetzten Stoppsignal.
+
+            Fehler beim Abschluss werden protokolliert; der Monitor prüft danach weiter.
+            """
             while not stopped.is_set():
                 try:
                     await asyncio.wait_for(stopped.wait(), timeout=10)
@@ -77,8 +87,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     }
 
     @application.middleware("http")
-    # Geschuetzte Routen auf eine gueltige Anmeldung pruefen und Antwortheader setzen.
     async def require_login(request: Request, call_next):
+        """Prüft Sitzungen für geschützte Routen und setzt Schutzheader auf dynamische Antworten."""
         # Statische Ressourcen bleiben auch zum Darstellen der Anmeldeseite erreichbar.
         if request.url.path.startswith("/static/"):
             return await call_next(request)
@@ -100,30 +110,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.headers["X-Frame-Options"] = "DENY"
         return response
 
-    # Das CSRF-Token des Formulars mit dem Token der aktuellen Sitzung vergleichen.
     def verify_csrf(form, request):
+        """Prüft das Formular-Token gegen die Sitzung und lehnt Abweichungen mit HTTP 403 ab."""
         # Das Formular muss zu der Sitzung gehören, aus der es geöffnet wurde.
         session = request.state.session
         if not session or not secrets.compare_digest(str(form.get("csrf_token", "")), session["csrf_token"]):
             raise HTTPException(status_code=403, detail="Ungültiges Formular. Seite neu laden.")
 
-    # Gemeinsame Anzeige-, Anmelde- und Formularwerte fuer alle Templates bereitstellen.
     def common_context(request):
+        """Liefert gemeinsame Anzeigeangaben, Anmeldestatus und Formular-Token für Templates."""
         session = request.state.session
         return {"title": settings.title, "labels": labels,
             "csrf_token": session["csrf_token"] if session else "",
             "authenticated": bool(session and session["authenticated"]), "username": request.state.username,
             "months": ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]}
 
-    # Das neue Sitzungstoken mit eingeschraenktem Browserzugriff in der Antwort setzen.
     def set_session_cookie(response, request, token):
+        """Setzt das Sitzungstoken als geschütztes Cookie und gibt die Antwort zurück."""
         # HttpOnly sperrt JavaScript-Zugriff; Secure gilt nur bei einer HTTPS-Verbindung.
         response.set_cookie(auth.COOKIE_NAME, token, max_age=auth.SESSION_SECONDS,
                             httponly=True, samesite="strict", secure=request.url.scheme == "https", path="/")
         return response
 
-    # Anmelde- oder Einrichtungsformular mit einer CSRF-geschuetzten Sitzung ausliefern.
     def login_response(request, setup=False, errors=None, status_code=200):
+        """Erstellt die Anmelde- oder Einrichtungsseite mit Fehlern und Formularschutz.
+
+        Falls nötig, wird eine nicht angemeldete Sitzung angelegt und als Cookie gesetzt.
+        """
         token = None
         if not request.state.session:
             # Auch das Anmeldeformular benötigt eine Sitzung für den Formularschutz.
@@ -136,15 +149,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return set_session_cookie(response, request, token) if token else response
 
     @application.get("/setup", response_class=HTMLResponse, include_in_schema=False)
-    # Die erstmalige Einrichtung nur anbieten, solange noch kein Konto existiert.
     def setup_page(request: Request):
+        """Zeigt die erstmalige Einrichtung oder leitet bei vorhandenem Profil zur Anmeldung."""
         if request.state.username:
             return RedirectResponse("/login", status_code=303)
         return login_response(request, setup=True)
 
     @application.get("/login", response_class=HTMLResponse, include_in_schema=False)
-    # Je nach Kontostand zum Einrichten, Anmelden oder Dashboard weiterleiten.
     def login_page(request: Request):
+        """Zeigt die Anmeldung oder leitet abhängig von Profil und Sitzung passend weiter."""
         if not request.state.username:
             return RedirectResponse("/setup", status_code=303)
         if request.state.session and request.state.session["authenticated"]:
@@ -153,8 +166,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @application.post("/setup", response_class=HTMLResponse, include_in_schema=False)
     @application.post("/login", response_class=HTMLResponse, include_in_schema=False)
-    # Formulardaten pruefen, Konto einrichten oder anmelden und die Sitzung setzen.
     async def sign_in(request: Request):
+        """Verarbeitet Einrichtung oder Anmeldung und setzt bei Erfolg eine neue Sitzung.
+
+        Fehler erscheinen im Formular; eine aktive Anmeldesperre ergibt HTTP 429.
+        """
         setup = request.url.path == "/setup"
         if setup and request.state.username:
             return RedirectResponse("/login", status_code=303)
@@ -176,8 +192,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return set_session_cookie(RedirectResponse("/", status_code=303), request, token)
 
     @application.post("/logout", include_in_schema=False)
-    # Nach CSRF-Pruefung die serverseitige Sitzung und das Browser-Cookie loeschen.
     async def sign_out(request: Request):
+        """Prüft den Formularschutz, entfernt Sitzung und Cookie und leitet zur Anmeldung."""
         async with request.form(max_fields=1, max_files=0) as form:
             verify_csrf(form, request)
         await run_in_threadpool(auth.destroy_session, settings.database_path, request.cookies.get(auth.COOKIE_NAME, ""))
@@ -185,8 +201,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         response.delete_cookie(auth.COOKIE_NAME, path="/")
         return response
 
-    # Dashboarddaten, Warnungen und Zeitwaechter fuer die gewaehlte Verlaufsansicht rendern.
     def render(request, page=1, errors=None, status_code=200, year=None, month=None):
+        """Erstellt das Dashboard mit gefiltertem Verlauf, Warnungen und Zeitwächter."""
         clock = clock_state(settings.database_path, page, year=year, month=month)
         preferences = load_preferences(settings.database_path)
         return templates.TemplateResponse(
@@ -198,13 +214,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             headers={"Cache-Control": "no-store"},
         )
 
-    # Gespeicherte Einstellungen in die vom Formular erwarteten Zeichenketten umwandeln.
     def saved_defaults():
+        """Lädt die gespeicherten Einstellungen als Zeichenketten für das Formular."""
         return load_preferences(settings.database_path).form_values()
 
     @application.get("/settings", response_class=HTMLResponse, include_in_schema=False)
-    # Das Einstellungsformular mit aktuellen Werten und optionaler Speicherbestaetigung zeigen.
     def settings_page(request: Request):
+        """Zeigt aktuelle Einstellungen und gegebenenfalls die Speicherbestätigung."""
         return templates.TemplateResponse(
             request=request, name="settings.html",
             context={**common_context(request), "values": saved_defaults(), "errors": [],
@@ -213,8 +229,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.post("/settings", response_class=HTMLResponse, include_in_schema=False)
-    # Wochenmodell und Periodengrenzen validieren und bestehende Tagesgrenzen bewahren.
     async def update_settings(request: Request):
+        """Validiert und speichert Wochenmodell und Periodengrenzen bei unveränderten Tagesgrenzen.
+
+        Ungültige Angaben werden mit HTTP 422 im Einstellungsformular angezeigt.
+        """
         async with request.form(max_fields=30, max_files=0) as form:
             verify_csrf(form, request)
             values = {key: str(form.get(key, "")) for key in Preferences().form_values()}
@@ -236,8 +255,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse("/settings?saved=1", status_code=303)
 
     @application.post("/clock", include_in_schema=False)
-    # Eine geschuetzte Check-in-/Check-out-Aktion ausfuehren oder den Konflikt anzeigen.
     async def update_clock(request: Request):
+        """Führt einen formulargeschützten Check-in oder Check-out mit Revisionsprüfung aus.
+
+        Ungültige Aktionen werden als Konflikt mit HTTP 409 im Dashboard angezeigt.
+        """
         async with request.form(max_fields=5, max_files=0) as form:
             verify_csrf(form, request)
             action = str(form.get("action", ""))
@@ -249,14 +271,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse("/", status_code=303)
 
     @application.get("/", response_class=HTMLResponse, include_in_schema=False)
-    # Gepruefte Seiten- und Monatsfilter an die Dashboarddarstellung weiterreichen.
     def index(request: Request, page: int = Query(default=1, ge=1, le=1000000),
               year: int = Query(default=0, ge=0, le=9998),
               month: int = Query(default=0, ge=0, le=12)):
+        """Zeigt das Dashboard; null als Jahres- oder Monatsfilter bedeutet keine Einschränkung."""
         return render(request, page=page, year=year or None, month=month or None)
 
-    # Datums- und Uhrzeitfelder fuer neue oder zu bearbeitende Eintraege aufbereiten.
     def edit_response(request, entry_id, values, errors=None, status_code=200):
+        """Bereitet Datumsfelder auf und erstellt das Formular zum Anlegen oder Bearbeiten."""
         values = dict(values)
         for key in ("started_at", "ended_at"):
             try:
@@ -278,8 +300,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.get("/api/clock/today", include_in_schema=False)
-    # Aktuelle Zeitwerte, Warnungen und Buchungsrevision fuer die Live-Anzeige liefern.
     def live_today():
+        """Liefert Zeitwerte, Warnungen und Buchungsrevision für die Live-Aktualisierung."""
         state = clock_state(settings.database_path)
         preferences = load_preferences(settings.database_path)
         watchdog = daily_watchdog(state["today_seconds"], preferences.weekly_hours)
@@ -300,8 +322,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "revision": state["revision"], "active": state["active"] is not None}
 
     @application.get("/entries/new", response_class=HTMLResponse, include_in_schema=False)
-    # Ein neues Formular mit aktueller Revision und einer Stunde als Vorschlag oeffnen.
     def new_entry_page(request: Request):
+        """Öffnet ein neues Buchungsformular mit aktueller Revision und einer Stunde als Vorschlag."""
         close_overdue_entries(settings.database_path)
         with connect(settings.database_path) as connection:
             revision = connection.execute("SELECT clock_revision FROM local_settings WHERE id = 1").fetchone()[0]
@@ -313,8 +335,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return edit_response(request, None, values)
 
     @application.post("/entries/new", response_class=HTMLResponse, include_in_schema=False)
-    # Getrennte Formularfelder zusammensetzen und einen vergangenen Eintrag speichern.
     async def add_entry(request: Request):
+        """Speichert eine manuelle Buchung aus den Formularfeldern samt optionaler Pause.
+
+        Zeigt Eingabefehler mit HTTP 422 und Revisionskonflikte mit HTTP 409 an.
+        Bei Erfolg wird zum Buchungsmonat im Verlauf weitergeleitet.
+        """
         async with request.form(max_fields=24, max_files=0) as form:
             verify_csrf(form, request)
             values = {key: str(form.get(key, "")) for key in
@@ -335,8 +361,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse(f"/?year={start.year}&month={start.month}&added=1#entries-heading", status_code=303)
 
     @application.get("/entries/{entry_id}/edit", response_class=HTMLResponse, include_in_schema=False)
-    # Einen vorhandenen abgeschlossenen Eintrag laden oder passende Fehler anzeigen.
     def edit_entry_page(request: Request, entry_id: int):
+        """Zeigt einen abgeschlossenen Eintrag zum Bearbeiten; fehlende IDs ergeben HTTP 404."""
         try:
             values = load_edit_entry(settings.database_path, entry_id)
         except LookupError as error:
@@ -346,8 +372,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return edit_response(request, entry_id, values)
 
     @application.post("/entries/{entry_id}/edit", response_class=HTMLResponse, include_in_schema=False)
-    # Aenderungen samt optionaler Pause speichern und zum Monat des Eintrags zurueckkehren.
     async def save_entry(request: Request, entry_id: int):
+        """Speichert Buchungsänderungen und leitet bei Erfolg zum Monat des Eintrags.
+
+        Fehlende IDs ergeben HTTP 404, ungültige Angaben HTTP 422 und
+        veraltete Bearbeitungsstände HTTP 409.
+        """
         async with request.form(max_fields=24, max_files=0) as form:
             verify_csrf(form, request)
             values = {key: str(form.get(key, "")) for key in
@@ -373,8 +403,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse(f"/?year={start.year}&month={start.month}&updated=1#entries-heading", status_code=303)
 
     @application.get("/entries/{entry_id}/delete", response_class=HTMLResponse, include_in_schema=False)
-    # Vor dem Loeschen die Zeiten und aktuelle Revision zur Bestaetigung anzeigen.
     def delete_entry_page(request: Request, entry_id: int):
+        """Zeigt Zeiten und Revision eines abgeschlossenen Eintrags zur Löschbestätigung."""
         try:
             values = load_edit_entry(settings.database_path, entry_id)
         except LookupError as error:
@@ -388,8 +418,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @application.post("/entries/{entry_id}/delete", response_class=HTMLResponse, include_in_schema=False)
-    # Die bestaetigte Loeschung ausfuehren und Fehler ohne Erfolgsmeldung anzeigen.
     async def remove_entry(request: Request, entry_id: int):
+        """Löscht nach Formular- und Revisionsprüfung den bestätigten abgeschlossenen Eintrag."""
         async with request.form(max_fields=3, max_files=0) as form:
             verify_csrf(form, request)
             revision = str(form.get("revision", ""))
@@ -403,8 +433,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return RedirectResponse("/?deleted=1#entries-heading", status_code=303)
 
     @application.post("/settings/password", response_class=HTMLResponse, include_in_schema=False)
-    # Passwortaenderungen pruefen und bei Erfolg eine neue Sitzung im Browser setzen.
     async def update_password(request: Request):
+        """Ändert das Passwort und setzt bei Erfolg ein neues Sitzungscookie.
+
+        Fehler erscheinen auf der Einstellungsseite mit HTTP 422 oder bei Sperre HTTP 429.
+        """
         async with request.form(max_fields=4, max_files=0) as form:
             verify_csrf(form, request)
             current = str(form.get("current_password", ""))
@@ -422,13 +455,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return set_session_cookie(RedirectResponse("/settings?password_saved=1#password", status_code=303), request, token)
 
     @application.post("/api/time-rules/evaluate", response_model=Evaluation, tags=["Arbeitszeitregeln"])
-    # Einen validierten Arbeitstag durch die gemeinsame Regelpruefung auswerten lassen.
     def evaluate_workday(workday: Workday) -> Evaluation:
+        """Liefert die gemeinsame Regelprüfung für den validierten eingegebenen Arbeitstag."""
         return evaluate(workday)
 
     @application.get("/health", tags=["System"])
-    # Die Erreichbarkeit der Datenbank mit einer einfachen SQL-Abfrage pruefen.
     def health() -> dict[str, str]:
+        """Prüft die Datenbankverbindung per SQL-Abfrage und liefert bei Erfolg den Status."""
         with connect(settings.database_path) as connection:
             connection.execute("SELECT 1").fetchone()
         return {"status": "ok", "database": "ok"}
